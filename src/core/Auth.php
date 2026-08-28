@@ -19,10 +19,11 @@ class Auth {
         return isset($_SESSION['usuario_id']) && isset($_SESSION['usuario_nombre']);
     }
 
-    public static function autenticar($usuarioId, $usuarioNombre) {
+    public static function autenticar($usuarioId, $usuarioNombre, $usuarioRol = 'miembro') {
         self::iniciar();
         $_SESSION['usuario_id'] = $usuarioId;
         $_SESSION['usuario_nombre'] = $usuarioNombre;
+        $_SESSION['usuario_rol'] = $usuarioRol;
         $_SESSION['login_time'] = time();
     }
 
@@ -31,7 +32,7 @@ class Auth {
         $_SESSION = [];
         session_destroy();
         session_regenerate_id();
-        header('Location: /login.php');
+        header('Location: ?action=login');
         exit;
     }
 
@@ -41,6 +42,14 @@ class Auth {
 
     public static function getUsuarioNombre() {
         return $_SESSION['usuario_nombre'] ?? null;
+    }
+
+    public static function getUsuarioRol() {
+        return $_SESSION['usuario_rol'] ?? 'miembro';
+    }
+
+    public static function esAdmin() {
+        return self::getUsuarioRol() === 'admin';
     }
 
     // Verificar si la sesión expiró (ej. 2 horas)

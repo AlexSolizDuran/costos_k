@@ -1,28 +1,36 @@
 <?php
-$contenidoPagina = '
-<div class="page-header">
-    <h1>Mis Grupos</h1>
-    <a href="?action=create_group" class="btn-primary">Crear nuevo grupo</a>
-</div>';
+ob_start();
+?>
+<div class="cabecera">
+    <div>
+        <h1>Mis Grupos</h1>
+        <div class="usuario"> Bienvenido, <?= htmlspecialchars(Auth::getUsuarioNombre()) ?> </div>
+    </div>
+    <div class="acciones">
+        <a class="crear-grupo" href="?action=create_group"> + Crear grupo </a>
+    </div>
+</div>
 
-if (empty($grupos)) {
-    $contenidoPagina .= '<p>Aun no tienes grupos.</p>';
-} else {
-    $contenidoPagina .= '
-    <table>
-        <thead><tr><th>Nombre</th><th>Descripcion</th><th>Rol</th><th>Acciones</th></tr></thead>
-        <tbody>';
-    foreach ($grupos as $grupo) {
-        $desc = htmlspecialchars(substr($grupo['descripcion'], 0, 50));
-        $contenidoPagina .= '
-        <tr>
-            <td><a href="?action=group_detail&id=' . $grupo['id'] . '">' . htmlspecialchars($grupo['nombre']) . '</a></td>
-            <td>' . $desc . '</td>
-            <td>' . htmlspecialchars($grupo['integrante_rol']) . '</td>
-            <td><a href="?action=group_detail&id=' . $grupo['id'] . '" class="btn-small">Ver</a>
-                <a href="?action=group_expenses&id=' . $grupo['id'] . '" class="btn-small">Gastos</a></td>
-        </tr>';
-    }
-    $contenidoPagina .= '</tbody></table>';
-}
+<?php if (count($grupos) === 0): ?>
+    <div class="sin-grupos">
+        <h2> Todavía no tienes grupos </h2>
+        <p> Crea tu primer grupo para comenzar a registrar gastos. </p>
+    </div>
+<?php else: ?>
+    <div class="grupos">
+        <?php foreach ($grupos as $item): ?>
+            <div class="grupo">
+                <h2> <?= htmlspecialchars($item['nombre']) ?> </h2>
+                <p> <?= nl2br(htmlspecialchars($item['descripcion'] ?? '')) ?> </p>
+                <small> Rol: <?= htmlspecialchars($item['integrante_rol']) ?> </small>
+                <div class="grupo-links">
+                    <a href="?action=group_detail&id=<?= (int) $item['id'] ?>"> Entrar al grupo → </a>
+                    <a href="?action=group_expenses&id=<?= (int) $item['id'] ?>"> Ver gastos </a>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+<?php endif; ?>
+<?php
+$contenidoPagina = ob_get_clean();
 ?>

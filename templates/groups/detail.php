@@ -1,34 +1,168 @@
 <?php
-$contenidoPagina = '
-<div class="page-header">
-    <h1>Grupo: ' . htmlspecialchars($grupo['nombre'] ?? '') . '</h1>
-    <p>' . htmlspecialchars($grupo['descripcion'] ?? '') . '</p>
+$grupoId = (int) $grupo['id'];
+$rol = $grupo['mi_rol'];
+$esAdminGrupo = ($rol === 'admin');
+ob_start();
+?>
+<div class="cabecera">
+    <div>
+        <a class="volver" href="?action=dashboard"> ← Mis grupos </a>
+        <h1 class="titulo"> <?= htmlspecialchars($grupo['nombre']) ?> </h1>
+    </div>
 </div>
 
-<div class="group-details">
-    <p><strong>Estado:</strong> ' . (($grupo['estado'] ?? '') === 'activo' ? 'Activo' : 'Cerrado') . '</p>
-    <p><strong>Fecha:</strong> ' . date('d/m/Y', strtotime($grupo['fecha_creacion'] ?? 'now')) . '</p>
+<!-- ============ Información del grupo ============ -->
+<div class="grupo-info">
+    <h2>Información del grupo</h2>
+    <?php if (!empty($grupo['descripcion'])): ?>
+        <div class="descripcion"> <?= nl2br(htmlspecialchars($grupo['descripcion'])) ?> </div>
+    <?php else: ?>
+        <div class="descripcion"> Este grupo no tiene descripción. </div>
+    <?php endif; ?>
 
-    <h3>Integrantes (' . count($integrantes) . ')</h3>
-    <table>
-        <thead><tr><th>Nombre</th><th>Rol</th></tr></thead>
-        <tbody>';
-
-foreach ($integrantes as $integ) {
-    $contenidoPagina .= '
-        <tr>
-            <td>' . htmlspecialchars($integ['nombre']) . '</td>
-            <td>' . htmlspecialchars($integ['rol']) . '</td>
-        </tr>';
-}
-
-$contenidoPagina .= '
-        </tbody>
-    </table>
-
-    <div style="margin-top:1rem">
-        <a href="?action=create_expense&grupo_id=' . ($grupo['id'] ?? '') . '" class="btn-primary">Agregar gasto</a>
-        <a href="?action=group_expenses&id=' . ($grupo['id'] ?? '') . '" class="btn-small">Ver gastos</a>
+    <div class="datos-grupo">
+        <div class="dato">
+            <strong>Creado por</strong>
+            <?= htmlspecialchars($grupo['creador_nombre'] ?? '—') ?>
+        </div>
+        <div class="dato">
+            <strong>Fecha de creación</strong>
+            <?= fmtFechaCorta($grupo['fecha_creacion']) ?>
+        </div>
+        <div class="dato">
+            <strong>Estado</strong>
+            <?php if ($grupo['estado'] === 'activo'): ?>
+                <span class="estado estado-activo"> Activo </span>
+            <?php else: ?>
+                <span class="estado estado-cerrado"> Cerrado </span>
+            <?php endif; ?>
+        </div>
     </div>
-</div>';
+</div>
+
+<!-- ============ Administración (solo admin del grupo) ============ -->
+<?php if ($esAdminGrupo): ?>
+    <div class="administracion">
+        <h2>Administración</h2>
+        <div class="acciones">
+            <button type="button" class="btn btn-negro" onclick="abrirModificarGrupo()"> Modificar grupo </button>
+            <a class="btn btn-azul" href="#" onclick="abrirInvitacion(); return false;"> 🔗 Invitar personas al grupo </a>
+            <?php if ($grupo['estado'] === 'activo'): ?>
+                <a class="btn btn-gris" href="?action=close_group&id=<?= $grupoId ?>" onclick="return confirm('¿Cerrar este grupo?');"> Cerrar grupo </a>
+            <?php endif; ?>
+            <a class="btn btn-rojo" href="?action=delete_group&id=<?= $grupoId ?>" onclick="return confirm('¿ELIMINAR DEFINITIVAMENTE este grupo y todos sus datos?');"> Eliminar grupo </a>
+        </div>
+    </div>
+<?php endif; ?>
+
+<!-- ============ Integrantes ============ -->
+<div class="seccion">
+    <div class="seccion-cabecera">
+        <h2> Integrantes (<?= count($integrantes) ?>) </h2>
+        <?php if ($esAdminGrupo): ?>
+            <button type="button" class="btn btn-azul" onclick="abrirAgregarIntegrante()"> + Agregar integrante </button>
+        <?php endif; ?>
+    </div>
+
+    <?php if (count($integrantes) === 0): ?>
+        <div class="sin-datos"> No hay integrantes registrados. </div>
+    <?php else: ?>
+        <div class="tabla-contenedor">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Email</th>
+                        <th>Rol</th>
+                        <th>Fecha de unión</th>
+                        <?php if ($esAdminGrupo): ?><th>Acciones</th><?php endif; ?>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($integrantes as $integrante): ?>
+                    <tr>
+                        <td> <?= htmlspecialchars($integrante['nombre']) ?> </td>
+                        <td> <?= htmlspecialchars($integrante['email']) ?> </td>
+                        <td> <?= htmlspecialchars($integrante['rol']) ?> </td>
+                        <td> <?= fmtFecha($integrante['fecha_union']) ?> </td>
+                        <?php if ($esAdminGrupo): ?>
+                            <td>
+                                <?php if ((int) $integrante['usuario_id'] !== (int) ($grupo['creado_por'] ?? 0)): ?>
+                                    <?php if ($integrante['rol'] === 'miembro'): ?>
+                                        <a class="accion" href="?action=change_role&grupo_id=<?= $grupoId ?>&usuario_id=<?= (int) $integrante['usuario_id'] ?>&rol=admin" onclick="return confirm('¿Convertir a este usuario en administrador?');"> Hacer admin </a>
+                                    <?php else: ?>
+                                        <a class="accion" href="?action=change_role&grupo_id=<?= $grupoId ?>&usuario_id=<?= (int) $integrante['usuario_id'] ?>&rol=miembro" onclick="return confirm('¿Cambiar este administrador a miembro?');"> Hacer miembro </a>
+                                    <?php endif; ?>
+                                    <br><br>
+                                    <a class="accion accion-roja" href="?action=remove_member&grupo_id=<?= $grupoId ?>&usuario_id=<?= (int) $integrante['usuario_id'] ?>" onclick="return confirm('¿Eliminar este integrante del grupo?');"> Eliminar </a>
+                                <?php else: ?>
+                                    <strong>Creador</strong>
+                                <?php endif; ?>
+                            </td>
+                        <?php endif; ?>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+
+    <div class="salir" style="text-align: right; margin-top: 10px;">
+        <a class="accion accion-roja" href="?action=leave_group&id=<?= $grupoId ?>" onclick="return confirm('¿Seguro que quieres salir de este grupo?');"> Salir del grupo </a>
+    </div>
+</div>
+
+<!-- ============ Gastos ============ -->
+<div class="seccion">
+    <div class="seccion-cabecera">
+        <h2>Gastos</h2>
+        <?php if ($grupo['estado'] === 'activo'): ?>
+            <a class="btn btn-azul" href="?action=create_expense&grupo_id=<?= $grupoId ?>"> + Agregar gasto </a>
+        <?php endif; ?>
+    </div>
+
+    <?php if (count($gastos) === 0): ?>
+        <div class="sin-datos">
+            <h3>No hay gastos todavía</h3>
+            <p> Todavía no hay gastos registrados en este grupo. </p>
+        </div>
+    <?php else: ?>
+        <div class="tabla-contenedor">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Título</th>
+                        <th>Información</th>
+                        <th>Monto</th>
+                        <th>Pagado por</th>
+                        <th>Fecha</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($gastos as $gasto): ?>
+                    <tr>
+                        <td><strong><?= htmlspecialchars($gasto['concepto']) ?></strong></td>
+                        <td><?= nl2br(htmlspecialchars($gasto['informacion'] ?? '')) ?></td>
+                        <td><strong><?= bs($gasto['monto']) ?></strong></td>
+                        <td><?= htmlspecialchars($gasto['pagado_por_nombre']) ?></td>
+                        <td><?= fmtFechaCorta($gasto['fecha']) ?></td>
+                        <td>
+                            <button type="button" class="accion boton-accion" onclick="abrirGasto(<?= (int) $gasto['id'] ?>)"> Ver </button>
+                            <?php if ((int) $gasto['user_id'] === (int) $usuarioId): ?>
+                                <br><br>
+                                <a href="#" class="accion" onclick="abrirModificarGasto(<?= (int) $gasto['id'] ?>); return false;"> Modificar </a>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</div>
+
+<?php include __DIR__ . '/../partials/modales_grupo.php'; ?>
+<?php
+$contenidoPagina = ob_get_clean();
 ?>

@@ -1,26 +1,67 @@
 <?php
-$contenidoPagina = '
-<div class="page-header">
-    <h1>Gastos del grupo</h1>
-    <a href="?action=create_expense&grupo_id=' . ($grupoId ?? '') . '" class="btn-primary">Agregar gasto</a>
-</div>';
+$grupoId = (int) $grupo['id'];
+ob_start();
+?>
+<div class="cabecera">
+    <div>
+        <a class="volver" href="?action=group_detail&id=<?= $grupoId ?>"> ← <?= htmlspecialchars($grupo['nombre']) ?> </a>
+        <h1 class="titulo"> Gastos del grupo </h1>
+    </div>
+    <?php if ($grupo['estado'] === 'activo'): ?>
+        <div class="acciones">
+            <a class="crear-grupo" href="?action=create_expense&grupo_id=<?= $grupoId ?>"> + Agregar gasto </a>
+        </div>
+    <?php endif; ?>
+</div>
 
-if (empty($gastos)) {
-    $contenidoPagina .= '<p>No hay gastos registrados.</p>';
-} else {
-    $contenidoPagina .= '
-    <table>
-        <thead><tr><th>Concepto</th><th>Monto</th><th>Usuario</th><th>Fecha</th></tr></thead>
-        <tbody>';
-    foreach ($gastos as $gasto) {
-        $contenidoPagina .= '
-        <tr>
-            <td>' . htmlspecialchars($gasto['concepto']) . '</td>
-            <td>$' . number_format($gasto['monto'], 2) . '</td>
-            <td>' . htmlspecialchars($gasto['usuario_nombre']) . '</td>
-            <td>' . date('d/m/Y', strtotime($gasto['fecha'])) . '</td>
-        </tr>';
-    }
-    $contenidoPagina .= '</tbody></table>';
-}
+<div class="seccion" style="background:#eaf3fb; box-shadow:none; text-align:center;">
+    <strong>Tienes pendiente de pagar:</strong>
+    <span style="font-size:1.4rem; font-weight:bold; color:#0066cc;"> <?= bs($totalPendienteUsuario) ?> </span>
+</div>
+
+<?php if (count($gastos) === 0): ?>
+    <div class="sin-grupos">
+        <h2>No hay gastos registrados</h2>
+        <p>Todavía no hay gastos en este grupo.</p>
+    </div>
+<?php else: ?>
+    <div class="seccion">
+        <div class="tabla-contenedor">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Título</th>
+                        <th>Información</th>
+                        <th>Monto</th>
+                        <th>Pagado por</th>
+                        <th>Fecha</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($gastos as $gasto): ?>
+                    <tr>
+                        <td><strong><?= htmlspecialchars($gasto['concepto']) ?></strong></td>
+                        <td><?= nl2br(htmlspecialchars($gasto['informacion'] ?? '')) ?></td>
+                        <td><strong><?= bs($gasto['monto']) ?></strong></td>
+                        <td><?= htmlspecialchars($gasto['pagado_por_nombre']) ?></td>
+                        <td><?= fmtFechaCorta($gasto['fecha']) ?></td>
+                        <td>
+                            <button type="button" class="accion boton-accion" onclick="abrirGasto(<?= (int) $gasto['id'] ?>)"> Ver </button>
+                            <?php if ((int) $gasto['user_id'] === (int) $usuarioId): ?>
+                                <br><br>
+                                <a href="#" class="accion" onclick="abrirModificarGasto(<?= (int) $gasto['id'] ?>); return false;"> Modificar </a>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+<?php endif; ?>
+
+<?php include __DIR__ . '/../partials/modales_grupo.php'; ?>
+<?php
+$contenidoPagina = ob_get_clean();
 ?>

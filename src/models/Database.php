@@ -32,8 +32,16 @@ class Database {
             }
         }
 
-        // Construir DSN PDO
-        $dsn = "pgsql:host={$config['host']};dbname={$config['dbname']};sslmode=require";
+        // Construir DSN PDO.
+        // En Windows (libpq que no negocia SNI), Neon requiere el endpoint explícito.
+        // En Linux, libpq sí negocia SNI y un endpoint distinto del host provoca
+        // "Inconsistent project name inferred from SNI", así que se omite.
+        if (PHP_OS_FAMILY === 'Windows') {
+            $endpoint = explode('-pooler.', $config['host'], 2)[0];
+            $dsn = "pgsql:host={$config['host']};dbname={$config['dbname']};sslmode=require;options='endpoint={$endpoint}'";
+        } else {
+            $dsn = "pgsql:host={$config['host']};dbname={$config['dbname']};sslmode=require";
+        }
         
         try {
             $this->conn = new PDO($dsn, $config['username'], $config['password']);
