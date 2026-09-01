@@ -29,7 +29,7 @@ ob_start();
             </div>
         <?php endif; ?>
 
-        <form method="POST" action="?action=create_expense">
+        <form method="POST" action="?action=create_expense" enctype="multipart/form-data">
             <input type="hidden" name="grupo_id" value="<?= (int) $grupo['id'] ?>">
 
             <label> Título del gasto </label>
@@ -37,6 +37,10 @@ ob_start();
 
             <label> Información adicional </label>
             <textarea name="informacion" rows="4" placeholder="Detalle del gasto (opcional)"><?= htmlspecialchars($_POST['informacion'] ?? '', ENT_QUOTES) ?></textarea>
+
+            <label> Imagen o foto (opcional) </label>
+            <input type="file" name="imagen_gasto" accept="image/*" capture="environment" style="margin-bottom:8px;">
+            <small style="display:block; color:#666; margin-top:-4px; margin-bottom:12px;">Puedes tomar una foto desde el celular o subir una imagen.</small>
 
             <div style="display:flex; gap:15px;">
                 <div style="flex:1;">
@@ -51,7 +55,7 @@ ob_start();
 
             <label> Pagado por </label>
             <select name="pagado_por" required>
-                <option value=""> Selecciona quién pagó... </option>
+                <option value=""> Selecciona quien pago... </option>
                 <?php foreach ($integrantes as $integrante): ?>
                     <option value="<?= (int) $integrante['usuario_id'] ?>"
                         <?= ((int) ($_POST['pagado_por'] ?? 0) === (int) $integrante['usuario_id'] ? 'selected' : '') ?>>

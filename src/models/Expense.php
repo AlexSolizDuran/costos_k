@@ -64,6 +64,7 @@ class Expense {
         $creadorId = (int) ($datos['user_id'] ?? 0);
         $titulo = trim($datos['concepto'] ?? '');
         $informacion = trim($datos['informacion'] ?? '');
+        $imagenUrl = isset($datos['imagen_url']) && $datos['imagen_url'] !== '' ? $datos['imagen_url'] : null;
         $monto = (float) ($datos['monto'] ?? 0);
         $fecha = $datos['fecha'] ?? date('Y-m-d');
         $pagadoPor = (int) ($datos['pagado_por'] ?? 0);
@@ -73,11 +74,11 @@ class Expense {
 
         $error = '';
         if ($titulo === '') {
-            $error = 'El título es obligatorio.';
+            $error = 'El titulo es obligatorio.';
         } elseif ($monto <= 0) {
             $error = 'El monto debe ser mayor a 0.';
         } elseif ($pagadoPor <= 0) {
-            $error = 'Debes seleccionar quién pagó.';
+            $error = 'Debes seleccionar quien pago.';
         } elseif (!is_array($participantes) || count($participantes) === 0) {
             $error = 'Debes seleccionar al menos un participante.';
         }
@@ -113,8 +114,8 @@ class Expense {
         try {
             $this->db->beginTransaction();
 
-            $sql = "INSERT INTO gastos (grupo_id, user_id, pagado_por, concepto, informacion, monto, tipo_division, fecha, estado, creado_en)
-                    VALUES (:grupo_id, :user_id, :pagado_por, :titulo, :informacion, :monto, :tipo_division, :fecha, 'activo', NOW())
+            $sql = "INSERT INTO gastos (grupo_id, user_id, pagado_por, concepto, informacion, imagen_url, monto, tipo_division, fecha, estado, creado_en)
+                    VALUES (:grupo_id, :user_id, :pagado_por, :titulo, :informacion, :imagen_url, :monto, :tipo_division, :fecha, 'activo', NOW())
                     RETURNING id";
             $stmt = $this->db->prepare($sql);
             $stmt->execute([
@@ -123,6 +124,7 @@ class Expense {
                 ':pagado_por' => $pagadoPor,
                 ':titulo' => $titulo,
                 ':informacion' => $informacion !== '' ? $informacion : null,
+                ':imagen_url' => $imagenUrl,
                 ':monto' => $monto,
                 ':tipo_division' => $tipo === 'igual' ? 'igualitaria' : 'personalizada',
                 ':fecha' => $fecha
@@ -174,7 +176,7 @@ class Expense {
 
     // Detalle completo para la API JSON (modal "Ver gasto")
     public function getById($id, $usuarioId) {
-        $sql = "SELECT g.id, g.grupo_id, g.concepto as titulo, g.informacion, g.monto, g.fecha,
+        $sql = "SELECT g.id, g.grupo_id, g.concepto as titulo, g.informacion, g.imagen_url, g.monto, g.fecha,
                        g.creado_en, g.estado, g.pagado_por, g.tipo_division, g.user_id,
                        COALESCE(u.nombre, '—') AS pagado_por_nombre
                 FROM gastos g
