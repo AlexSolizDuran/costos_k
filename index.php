@@ -556,6 +556,33 @@ switch ($action) {
             if ($grupo['estado'] !== 'activo') {
                 $errores[] = 'Este grupo estÃ¡ cerrado y no permite nuevos gastos.';
             }
+            $imagenUrl = null;
+            if (empty($errores)) {
+                if (isset($_FILES['imagen_gasto']) && $_FILES['imagen_gasto']['error'] !== UPLOAD_ERR_NO_FILE) {
+                    if ($_FILES['imagen_gasto']['error'] !== UPLOAD_ERR_OK) {
+                        $errores[] = 'La imagen no pudo subirse. Intenta de nuevo.';
+                    } else {
+                        $carpetaDestino = __DIR__ . '/uploads/gastos';
+                        if (!is_dir($carpetaDestino) && !mkdir($carpetaDestino, 0777, true) && !is_dir($carpetaDestino)) {
+                            $errores[] = 'No se pudo crear la carpeta de imágenes.';
+                        } else {
+                            $extension = strtolower(pathinfo($_FILES['imagen_gasto']['name'], PATHINFO_EXTENSION));
+                            $permitidas = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+                            if (!in_array($extension, $permitidas, true)) {
+                                $errores[] = 'La imagen debe tener formato JPG, PNG, WEBP o GIF.';
+                            } else {
+                                $nombreArchivo = 'gasto_' . $grupoId . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $extension;
+                                $destino = $carpetaDestino . DIRECTORY_SEPARATOR . $nombreArchivo;
+                                if (!move_uploaded_file($_FILES['imagen_gasto']['tmp_name'], $destino)) {
+                                    $errores[] = 'No se pudo guardar la imagen del gasto.';
+                                } else {
+                                    $imagenUrl = 'uploads/gastos/' . $nombreArchivo;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (empty($errores)) {
                 $expenseModel = new Expense(Database::getInstance());
                 $resultado = $expenseModel->create([
@@ -563,6 +590,7 @@ switch ($action) {
                     'user_id' => $usuarioId,
                     'concepto' => $_POST['concepto'] ?? '',
                     'informacion' => $_POST['informacion'] ?? '',
+                    'imagen_url' => $imagenUrl,
                     'monto' => $_POST['monto'] ?? 0,
                     'fecha' => $_POST['fecha'] ?? '',
                     'pagado_por' => $_POST['pagado_por'] ?? 0,

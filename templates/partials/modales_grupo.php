@@ -261,8 +261,12 @@ $esAdminGrupo = ($rolActual === 'admin');
                     '<td>' + accion + '</td>' +
                     '</tr>';
             });
+            const imagenHtml = g.imagen_url
+                ? '<div style="margin:12px 0; text-align:center;"><img src="' + g.imagen_url + '" alt="Imagen del gasto" style="max-width:100%; max-height:280px; border-radius:10px; border:1px solid #ddd; background:#fff;"></div>'
+                : '';
             document.getElementById('contenidoGasto').innerHTML =
                 '<p style="color:#666;">' + (g.informacion || '') + ' &nbsp;|&nbsp; Fecha: ' + g.fecha + '</p>' +
+                imagenHtml +
                 '<div class="tabla-contenedor"><table>' +
                 '<thead><tr><th>Integrante</th><th>Monto</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Acción</th></tr></thead>' +
                 '<tbody>' + filas + '</tbody></table></div>' +

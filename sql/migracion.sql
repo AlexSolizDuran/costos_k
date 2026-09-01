@@ -30,6 +30,7 @@ ALTER TABLE grupo_integrantes ADD COLUMN IF NOT EXISTS fecha_union TIMESTAMP NOT
 -- 4) GASTOS: información completa del gasto
 -- ------------------------------------------------------------
 ALTER TABLE gastos ADD COLUMN IF NOT EXISTS informacion TEXT;
+ALTER TABLE gastos ADD COLUMN IF NOT EXISTS imagen_url VARCHAR(255) NULL;
 ALTER TABLE gastos ADD COLUMN IF NOT EXISTS pagado_por INTEGER;
 ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tipo_division VARCHAR(20) NOT NULL DEFAULT 'igualitaria';
 ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estado VARCHAR(20) NOT NULL DEFAULT 'activo';
