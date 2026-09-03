@@ -136,7 +136,30 @@
         .btn-whatsapp { display: inline-block; padding: 11px 16px; background: #25D366; color: white; text-decoration: none; border-radius: 7px; font-weight: 600; }
         .btn-whatsapp:hover { opacity: 0.9; }
         .mensaje-copiado { display: none; margin-top: 10px; color: #16803c; font-size: 14px; }
-        .acciones-invitacion { margin-top: 20px; }
+        .acciones-invitacion { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+
+        /* ============ Botones de invitación (Link / QR) ============ */
+        .btn-inv { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; font-family: inherit; text-decoration: none; box-sizing: border-box; transition: all .15s ease; }
+        .btn-inv-ico { font-size: 16px; }
+        .btn-inv:disabled { cursor: not-allowed; }
+        .btn-inv-copiar { background: #eef2f7; color: #1a2733; border: 1px solid #cfd8e3; }
+        .btn-inv-copiar:hover:not(:disabled) { background: #dfe7f0; border-color: #b8c5d4; }
+        .btn-inv-copiar:disabled { background: #f4f6f9; color: #aab4bf; }
+        .btn-inv-whatsapp { background: #25D366; color: white; }
+        .btn-inv-whatsapp:hover { opacity: 0.9; }
+        .btn-inv-regenerar { background: #ffffff; color: #0066cc; border: 1.5px solid #0066cc; }
+        .btn-inv-regenerar:hover { background: #eaf3fb; }
+        .btn-inv-descargar { background: #0066cc; color: white; }
+        .btn-inv-descargar:hover:not(:disabled) { background: #0052a3; }
+        .btn-inv-descargar:disabled { background: #c3d6ea; color: #eef4fa; }
+
+        /* ============ Tabs Link / QR (invitaciones) ============ */
+        .seguro-tabs { display: flex; gap: 8px; margin: 16px 0 14px; background: #f1f3f5; padding: 4px; border-radius: 9px; }
+        .seguro-tab { flex: 1; padding: 10px; border: none; background: transparent; border-radius: 7px; cursor: pointer; font-size: 14px; font-weight: 600; color: #555; font-family: inherit; }
+        .seguro-tab:hover { color: #000; }
+        .seguro-tab.activa { background: white; color: #0066cc; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+        .qr-contenedor { display: flex; justify-content: center; padding: 14px; background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; }
+        .qr-contenedor canvas, .qr-contenedor img { max-width: 100%; height: auto; border-radius: 6px; }
 
         /* ============ Responsive ============ */
         @media (max-width: 700px) {

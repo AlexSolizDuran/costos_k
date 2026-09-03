@@ -32,16 +32,45 @@ $esAdminGrupo = ($rolActual === 'admin');
             <h2>Invitar personas al grupo</h2>
             <button type="button" class="cerrar-modal" onclick="cerrarModal('modalInvitacion')"> &times; </button>
         </div>
-        <p> Genera un enlace de invitación y compártelo para que nuevos usuarios se unan al grupo. </p>
-        <label> Enlace de invitación </label>
-        <div class="campo-enlace">
-            <input type="text" id="enlaceInvitacion" readonly placeholder="Genera el enlace para continuar">
-            <button type="button" id="btnGenerarEnlace" onclick="generarInvitacion()"> Generar enlace </button>
+        <p> Comparte este enlace (o escanea el código QR) para que nuevos usuarios se unan al grupo. </p>
+
+        <div class="seguro-tabs" id="seguroTabs">
+            <button type="button" class="seguro-tab activa" data-tab="link" onclick="cambiarTabInvitacion('link')"> 🔗 Link </button>
+            <button type="button" class="seguro-tab" data-tab="qr" onclick="cambiarTabInvitacion('qr')"> 📱 QR </button>
         </div>
-        <div class="mensaje-copiado" id="mensajeCopiado"> Enlace copiado al portapapeles </div>
-        <div class="acciones-invitacion">
-            <button type="button" class="btn-guardar" id="btnCopiarEnlace" onclick="copiarEnlace()" disabled> Copiar enlace </button>
-            <a class="btn-whatsapp" id="btnWhatsapp" href="#" target="_blank" style="pointer-events:none; opacity:0.5;"> Compartir por WhatsApp </a>
+
+        <!-- Vista Link -->
+        <div id="pestana-link">
+            <div class="campo-enlace">
+                <input type="text" id="enlaceInvitacion" readonly placeholder="Generando enlace...">
+            </div>
+            <div class="mensaje-copiado" id="mensajeCopiado"> Enlace copiado al portapapeles </div>
+            <div class="acciones-invitacion">
+                <button type="button" class="btn-inv btn-inv-copiar" id="btnCopiarEnlace" onclick="copiarEnlace()" disabled>
+                    <span class="btn-inv-ico">📋</span> Copiar enlace
+                </button>
+                <a class="btn-inv btn-inv-whatsapp" id="btnWhatsapp" href="#" target="_blank" style="pointer-events:none; opacity:0.5;">
+                    <span class="btn-inv-ico">💬</span> Compartir por WhatsApp
+                </a>
+                <button type="button" class="btn-inv btn-inv-regenerar" onclick="generarInvitacion()">
+                    <span class="btn-inv-ico">🔄</span> Generar enlace nuevo
+                </button>
+            </div>
+        </div>
+
+        <!-- Vista QR -->
+        <div id="pestana-qr" style="display:none;">
+            <div class="qr-contenedor">
+                <div id="qrInvitacion"></div>
+            </div>
+            <div class="acciones-invitacion">
+                <button type="button" class="btn-inv btn-inv-descargar" id="btnDescargarQR" onclick="descargarQR()" disabled>
+                    <span class="btn-inv-ico">⬇️</span> Descargar QR
+                </button>
+                <button type="button" class="btn-inv btn-inv-regenerar" onclick="generarInvitacion()">
+                    <span class="btn-inv-ico">🔄</span> Generar enlace nuevo
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -151,6 +180,7 @@ $esAdminGrupo = ($rolActual === 'admin');
     </div>
 </div>
 
+<script src="assets/js/qrcode.min.js"></script>
 <script>
     const BS_FORMAT = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     function bsFmt(n) { return 'Bs ' + BS_FORMAT.format(n); }
@@ -175,30 +205,73 @@ $esAdminGrupo = ($rolActual === 'admin');
     }
 
     /* ---------- Invitación ---------- */
+    let qrInvitacion = null;
+    let enlaceAbsolutoActual = '';
+
+    function urlAbsoluta(relativa) {
+        return window.location.origin + window.location.pathname + relativa;
+    }
+
     function generarInvitacion() {
-        const boton = document.getElementById('btnGenerarEnlace');
-        boton.disabled = true;
-        boton.textContent = 'Generando...';
         const fd = new FormData();
         fd.append('grupo_id', '<?= (int) $grupoId ?>');
         fetch('?action=generate_invitation', { method: 'POST', body: fd }).then(r => r.json()).then(data => {
-            boton.disabled = false;
             if (data.ok) {
-                document.getElementById('enlaceInvitacion').value = data.enlace;
-                const msj = 'Únete al grupo de gastos: ' + data.enlace;
+                const enlace = urlAbsoluta(data.enlace);
+                enlaceAbsolutoActual = enlace;
+                document.getElementById('enlaceInvitacion').value = enlace;
+                const msj = 'Únete al grupo de gastos: ' + enlace;
                 document.getElementById('btnCopiarEnlace').disabled = false;
                 const wa = document.getElementById('btnWhatsapp');
                 wa.href = 'https://wa.me/?text=' + encodeURIComponent(msj);
                 wa.style.pointerEvents = 'auto';
                 wa.style.opacity = 1;
+                dibujarQR(enlace);
             } else {
                 document.getElementById('enlaceInvitacion').value = '';
                 alert(data.error || 'No se pudo generar el enlace.');
             }
         }).catch(() => {
-            boton.disabled = false;
             alert('Error de conexión.');
         });
+    }
+    function dibujarQR(texto) {
+        const contenedor = document.getElementById('qrInvitacion');
+        contenedor.innerHTML = '';
+        if (typeof QRCode === 'undefined') {
+            contenedor.innerHTML = '<p style="color:#999; font-size:13px;">Librería QR no disponible.</p>';
+            return;
+        }
+        qrInvitacion = new QRCode(contenedor, {
+            text: texto,
+            width: 190,
+            height: 190,
+            colorDark: '#000000',
+            colorLight: '#ffffff',
+            correctLevel: QRCode.CorrectLevel.M
+        });
+        document.getElementById('btnDescargarQR').disabled = false;
+    }
+    function descargarQR() {
+        if (!qrInvitacion || !qrInvitacion._oDrawing) return;
+        const canvas = qrInvitacion._oDrawing._elCanvas || qrInvitacion._oDrawing._elImage;
+        const enlaceDescarga = document.createElement('a');
+        if (canvas && canvas.toDataURL) {
+            enlaceDescarga.href = canvas.toDataURL('image/png');
+            enlaceDescarga.download = 'invitacion_grupo.png';
+        } else {
+            return;
+        }
+        document.body.appendChild(enlaceDescarga);
+        enlaceDescarga.click();
+        document.body.removeChild(enlaceDescarga);
+    }
+    function cambiarTabInvitacion(tab) {
+        document.querySelectorAll('#seguroTabs .seguro-tab').forEach(function (b) {
+            b.classList.toggle('activa', b.getAttribute('data-tab') === tab);
+        });
+        document.getElementById('pestana-link').style.display = tab === 'link' ? '' : 'none';
+        document.getElementById('pestana-qr').style.display = tab === 'qr' ? '' : 'none';
     }
     function abrirInvitacion() {
         document.getElementById('enlaceInvitacion').value = '';
@@ -208,7 +281,11 @@ $esAdminGrupo = ($rolActual === 'admin');
         wa.href = '#';
         wa.style.pointerEvents = 'none';
         wa.style.opacity = 0.5;
+        document.getElementById('btnDescargarQR').disabled = true;
+        document.getElementById('qrInvitacion').innerHTML = '';
+        cambiarTabInvitacion('link');
         abrirModal('modalInvitacion');
+        generarInvitacion();
     }
     function copiarEnlace() {
         const campo = document.getElementById('enlaceInvitacion');
@@ -384,4 +461,15 @@ $esAdminGrupo = ($rolActual === 'admin');
             if (ev.target === overlay) overlay.style.display = 'none';
         });
     });
+
+    /* ---------- Deudores: expandir detalle ---------- */
+    function alternarDeudas(usuarioId) {
+        const fila = document.getElementById('deudor-detalle-' + usuarioId);
+        if (fila) fila.style.display = fila.style.display === 'none' ? '' : 'none';
+    }
+
+    /* ---------- Deudores: abrir ventana flotante de registrar pago ---------- */
+    function pagarDeuda(gastoId, usuarioId, nombre, pendiente) {
+        abrirRegistrarPago(gastoId, usuarioId, nombre, pendiente);
+    }
 </script>

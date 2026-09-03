@@ -313,6 +313,7 @@ switch ($action) {
         $rol = $grupo['mi_rol'];
         $integrantes = $grupoModel->getIntegrantes($grupoId);
         $gastos = (new Expense(Database::getInstance()))->getByGroup($grupoId);
+        $deudores = (new Expense(Database::getInstance()))->getDeudores($grupoId);
         $usuariosCandidatos = $grupoModel->getUsuariosCandidatos($grupoId);
         require __DIR__ . '/templates/groups/detail.php';
         break;
@@ -564,7 +565,7 @@ switch ($action) {
                     } else {
                         $carpetaDestino = __DIR__ . '/uploads/gastos';
                         if (!is_dir($carpetaDestino) && !mkdir($carpetaDestino, 0777, true) && !is_dir($carpetaDestino)) {
-                            $errores[] = 'No se pudo crear la carpeta de imágenes.';
+                            $errores[] = 'No se pudo crear la carpeta de imï¿½genes.';
                         } else {
                             $extension = strtolower(pathinfo($_FILES['imagen_gasto']['name'], PATHINFO_EXTENSION));
                             $permitidas = ['jpg', 'jpeg', 'png', 'webp', 'gif'];

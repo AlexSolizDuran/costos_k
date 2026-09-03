@@ -112,6 +112,71 @@ ob_start();
     </div>
 </div>
 
+<!-- ============ Deudores ============ -->
+<div class="seccion">
+    <div class="seccion-cabecera">
+        <h2> Deudores (<?= count($deudores) ?>) </h2>
+    </div>
+
+    <?php if (count($deudores) === 0): ?>
+        <div class="sin-datos"> No hay deudas pendientes en este grupo. </div>
+    <?php else: ?>
+        <div class="tabla-contenedor">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nombre</th>
+                        <th>Total deuda</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($deudores as $deudor): ?>
+                    <tr class="deudor-fila" onclick="alternarDeudas(<?= (int) $deudor['usuario_id'] ?>)">
+                        <td><strong><?= htmlspecialchars($deudor['nombre']) ?></strong></td>
+                        <td><strong class="deuda-total-deudor"><?= bs($deudor['total']) ?></strong></td>
+                        <td>
+                            <span class="accion"> Ver detalle ▾ </span>
+                        </td>
+                    </tr>
+                    <tr class="deudor-detalle" id="deudor-detalle-<?= (int) $deudor['usuario_id'] ?>" style="display:none;">
+                        <td colspan="3">
+                            <table class="tabla-interna">
+                                <thead>
+                                    <tr>
+                                        <th>Título</th>
+                                        <th>Deuda</th>
+                                        <th>Pagar deuda</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                <?php foreach ($deudor['deudas'] as $deuda): ?>
+                                    <?php $pendiente = (float) $deuda['monto']; ?>
+                                    <tr>
+                                        <td>
+                                            <strong><?= htmlspecialchars($deuda['concepto']) ?></strong>
+                                            <br><span style="color:#888; font-size:12px;"><?= fmtFechaCorta($deuda['fecha']) ?></span>
+                                        </td>
+                                        <td><?= bs($pendiente) ?></td>
+                                        <td>
+                                            <button type="button" class="accion boton-accion"
+                                                onclick="pagarDeuda(<?= (int) $deuda['gasto_id'] ?>, <?= (int) $deudor['usuario_id'] ?>, '<?= e($deudor['nombre']) ?>', <?= number_format($pendiente, 2, '.', '') ?>)">
+                                                Pagar deuda
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</div>
+
 <!-- ============ Gastos ============ -->
 <div class="seccion">
     <div class="seccion-cabecera">

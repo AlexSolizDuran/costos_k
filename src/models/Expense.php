@@ -400,6 +400,50 @@ class Expense {
         return $stmt->fetch();
     }
 
+    // Deudores del grupo con su deuda total y el desglose por gasto.
+    // Un deudor es un integrante con saldo pendiente>0 en un gasto activo
+    // donde no es el pagador. Devuelve array con 'usuario_id','nombre','total'
+    // y 'deudas' (concepto, monto, gasto_id, fecha).
+    public function getDeudores($grupoId) {
+        $sql = "SELECT gp.usuario_id, u.nombre,
+                       g.id AS gasto_id, g.concepto, g.fecha,
+                       (gp.monto_correspondiente - gp.monto_pagado) AS pendiente
+                FROM gasto_participantes gp
+                JOIN gastos g ON g.id = gp.gasto_id
+                JOIN users u ON u.id = gp.usuario_id
+                WHERE g.grupo_id = :grupo_id
+                  AND g.estado = 'activo'
+                  AND gp.usuario_id <> g.pagado_por
+                  AND gp.monto_correspondiente - gp.monto_pagado > 0.001
+                ORDER BY u.nombre ASC, g.fecha ASC, g.id ASC";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':grupo_id' => $grupoId]);
+        $filas = $stmt->fetchAll();
+
+        $deudores = [];
+        foreach ($filas as $fila) {
+            $uid = (int) $fila['usuario_id'];
+            if (!isset($deudores[$uid])) {
+                $deudores[$uid] = [
+                    'usuario_id' => $uid,
+                    'nombre' => $fila['nombre'],
+                    'total' => 0.0,
+                    'deudas' => []
+                ];
+            }
+            $pendiente = round((float) $fila['pendiente'], 2);
+            $deudores[$uid]['total'] = round($deudores[$uid]['total'] + $pendiente, 2);
+            $deudores[$uid]['deudas'][] = [
+                'gasto_id' => (int) $fila['gasto_id'],
+                'concepto' => $fila['concepto'],
+                'fecha' => $fila['fecha'],
+                'monto' => $pendiente
+            ];
+        }
+
+        return array_values($deudores);
+    }
+
     // Lo que el usuario aún debe pagar en el grupo (hacia el pagador de cada gasto)
     public function totalPendienteDe($usuarioId, $grupoId) {
         $sql = "SELECT COALESCE(SUM(
