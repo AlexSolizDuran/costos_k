@@ -15,6 +15,7 @@ require __DIR__ . '/src/models/User.php';
 require __DIR__ . '/src/models/Group.php';
 require __DIR__ . '/src/models/Expense.php';
 require __DIR__ . '/src/models/Payment.php';
+require __DIR__ . '/src/models/ExchangeRate.php';
 
 // Helpers de presentación
 require __DIR__ . '/templates/helpers.php';
@@ -275,6 +276,30 @@ if ($action === 'admin_usuario_toggle') {
         }
     }
     header('Location: ?action=admin_usuarios');
+    exit;
+}
+
+/* ============================================================
+   TIPOS DE CAMBIO (multi-moneda)
+   Solo un admin del sistema puede modificar; cualquier usuario
+   autenticado puede consultar las tasas vigentes.
+============================================================ */
+
+if ($action === 'config_moneda') {
+    $exchangeModel = new ExchangeRate(Database::getInstance());
+
+    if ($esAdminSistema && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $resultado = $exchangeModel->guardarTasas($_POST['bs_por_usd'] ?? '', $_POST['bs_por_usdt'] ?? '');
+        $_SESSION['flash'] = [$resultado['ok']
+            ? 'Tipos de cambio actualizados correctamente.'
+            : $resultado['error']];
+        header('Location: ?action=config_moneda');
+        exit;
+    }
+
+    $tituloPagina = 'Tipos de cambio';
+    $tasas = $exchangeModel->obtenerTasas();
+    require __DIR__ . '/templates/admin/tipos_cambio.php';
     exit;
 }
 

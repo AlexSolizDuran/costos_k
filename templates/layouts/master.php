@@ -189,6 +189,7 @@
                     <li><a href="?action=grupos">Mis Grupos</a></li>
                     <?php if(Auth::esAdmin()): ?>
                         <li><a href="?action=admin_usuarios">Usuarios</a></li>
+                        <li><a href="?action=config_moneda">Tipos de cambio</a></li>
                     <?php endif; ?>
                     <li><a href="?action=logout">Cerrar sesión</a></li>
                 <?php else: ?>
