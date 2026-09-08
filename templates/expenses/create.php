@@ -12,6 +12,8 @@ function estaMarcado($usuarioId, $integrantes, $postParticipantes) {
     return false;
 }
 $gastoTipoDivision = ($_POST['tipo_division'] ?? 'igual') === 'personalizado' ? 'personalizado' : 'igual';
+$monedaInicial = strtoupper($_POST['moneda'] ?? MONEDA_BS);
+$tasaInicial = $_POST['tasa_usd'] ?? ($tasasUsdPorMoneda[$monedaInicial] ?? 1);
 ob_start();
 ?>
 <div class="modal-overlay" style="display: flex;">
@@ -44,8 +46,17 @@ ob_start();
 
             <div style="display:flex; gap:15px;">
                 <div style="flex:1;">
-                    <label> Monto total (Bs) </label>
+                    <label> Moneda </label>
+                    <select name="moneda" id="monedaGasto" required>
+                        <?php foreach (MONEDAS_LABEL as $codigo => $etiqueta): ?>
+                            <option value="<?= e($codigo) ?>" <?= $monedaInicial === $codigo ? 'selected' : '' ?>><?= e($etiqueta) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <label> Monto total (<span id="etiquetaMonto"> <?= e(monedaLabel($monedaInicial)) ?> </span>) </label>
                     <input type="number" step="0.01" min="0.01" name="monto" id="montoGasto" value="<?= htmlspecialchars($_POST['monto'] ?? '', ENT_QUOTES) ?>" required>
+                    <label> Tasa USD (US$ por 1 unidad) </label>
+                    <input type="number" step="0.000001" min="0.000001" name="tasa_usd" id="tasaUsdGasto" value="<?= htmlspecialchars((string) $tasaInicial, ENT_QUOTES) ?>" required>
+                    <p id="previewUsd" style="font-size:13px; color:#666; margin:6px 0 0;"></p>
                 </div>
                 <div style="flex:1;">
                     <label> Fecha </label>
@@ -74,7 +85,7 @@ ob_start();
                         <?= htmlspecialchars($integrante['nombre']) ?>
                         <input type="number" step="0.01" min="0" name="monto_personalizado[<?= (int) $integrante['usuario_id'] ?>]"
                                class="monto-personalizado" style="width:120px; margin-left:auto; display:none;"
-                               placeholder="Bs" value="<?= htmlspecialchars($_POST['monto_personalizado'][$integrante['usuario_id']] ?? '', ENT_QUOTES) ?>"
+                               placeholder="<?= e(monedaLabel($monedaInicial)) ?>" value="<?= htmlspecialchars($_POST['monto_personalizado'][$integrante['usuario_id']] ?? '', ENT_QUOTES) ?>"
                                oninput="actualizarAyuda()">
                     </label>
                 <?php endforeach; ?>
@@ -112,16 +123,33 @@ ob_start();
         const monto = parseFloat(document.getElementById('montoGasto').value) || 0;
         if (tipo === 'igual') {
             if (marcados.length > 0) {
-                ayuda.textContent = 'Cada participante pagará ' + new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.round(monto * 100 / marcados.length) / 100) + ' Bs';
+                ayuda.textContent = 'Cada participante pagará ' + monedaLabelCliente() + ' ' + new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.round(monto * 100 / marcados.length) / 100);
             } else {
                 ayuda.textContent = 'Selecciona al menos un participante.';
             }
         } else {
             let total = 0;
             document.querySelectorAll('.monto-personalizado').forEach(function (c) { total += parseFloat(c.value) || 0; });
-            ayuda.textContent = 'Suma de montos personalizados: ' + new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(total) + ' Bs';
+            ayuda.textContent = 'Suma de montos personalizados: ' + monedaLabelCliente() + ' ' + new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(total);
         }
+        actualizarPreview();
     }
+
+    const etiquetasMoneda = <?= json_encode(MONEDAS_LABEL, JSON_UNESCAPED_UNICODE) ?>;
+    function monedaLabelCliente() { return etiquetasMoneda[document.getElementById('monedaGasto').value] || ''; }
+    function actualizarPreview() {
+        const monto = parseFloat(document.getElementById('montoGasto').value) || 0;
+        const tasa = parseFloat(document.getElementById('tasaUsdGasto').value) || 0;
+        const usd = monto * tasa;
+        const usdt = tasa > 0 ? usd / <?= json_encode((float) ($tasasUsdPorMoneda[MONEDA_USDT] ?? 1)) ?> : 0;
+        document.getElementById('etiquetaMonto').textContent = ' ' + monedaLabelCliente() + ' ';
+        document.getElementById('previewUsd').textContent = monto > 0 && tasa > 0
+            ? '≈ US$ ' + usd.toFixed(2) + ' | ≈ USDT ' + usdt.toFixed(2)
+            : '';
+    }
+    document.getElementById('monedaGasto').addEventListener('change', actualizarPreview);
+    document.getElementById('montoGasto').addEventListener('input', actualizarPreview);
+    document.getElementById('tasaUsdGasto').addEventListener('input', actualizarPreview);
 
     const tipoInicial = '<?= $gastoTipoDivision ?>';
     if (tipoInicial === 'personalizado') {
@@ -129,6 +157,7 @@ ob_start();
     } else {
         mostrarDivisionGasto('igual');
     }
+    actualizarPreview();
 </script>
 <?php
 $contenidoPagina = ob_get_clean();

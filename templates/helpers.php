@@ -1,9 +1,24 @@
 <?php
 // templates/helpers.php - Funciones de presentación reutilizables (escalables)
 
-// Formatea un monto en bolívares, igual que el original (number_format con 2 decimales)
+// Formatea un monto usando la etiqueta de su moneda original.
+function monedaLabel($moneda) {
+    $moneda = strtoupper((string) $moneda);
+    return MONEDAS_LABEL[$moneda] ?? $moneda;
+}
+
+function fmtMoneda($monto, $moneda = MONEDA_BS) {
+    return monedaLabel($moneda) . ' ' . number_format((float) $monto, 2);
+}
+
+function fmtMontoConUsd($monto, $moneda, $tasaUsd) {
+    $equivalente = (float) $monto * (float) $tasaUsd;
+    return fmtMoneda($monto, $moneda) . '<br><small style="color:#666;">≈ US$ ' . number_format($equivalente, 2) . '</small>';
+}
+
+// Compatibilidad con vistas antiguas.
 function bs($monto) {
-    return 'Bs ' . number_format((float) $monto, 2);
+    return fmtMoneda($monto, MONEDA_BS);
 }
 
 // Formatea una fecha legible

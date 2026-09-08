@@ -28,6 +28,8 @@ ON CONFLICT (clave) DO NOTHING;
 -- ------------------------------------------------------------
 ALTER TABLE gastos ADD COLUMN IF NOT EXISTS moneda VARCHAR(10) NOT NULL DEFAULT 'BS';
 ALTER TABLE gastos ADD COLUMN IF NOT EXISTS tasa_usd NUMERIC(12,6) NOT NULL DEFAULT 1;
+ALTER TABLE gasto_participantes ADD COLUMN IF NOT EXISTS monto_correspondiente_usd NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE gasto_participantes ADD COLUMN IF NOT EXISTS monto_pagado_usd NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 -- ------------------------------------------------------------
 -- 3) DATOS LEGACY: los gastos existentes eran en Bs.
@@ -40,3 +42,10 @@ UPDATE gastos SET tasa_usd = 1.0 / GREATEST(
         0.000001
     )
 WHERE moneda = 'BS' AND tasa_usd = 1;
+
+UPDATE gasto_participantes gp
+SET monto_correspondiente_usd = ROUND(gp.monto_correspondiente * g.tasa_usd, 2),
+        monto_pagado_usd = ROUND(gp.monto_pagado * g.tasa_usd, 2)
+FROM gastos g
+WHERE g.id = gp.gasto_id
+    AND gp.monto_correspondiente_usd = 0;

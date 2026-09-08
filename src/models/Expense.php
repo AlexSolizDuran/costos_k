@@ -13,7 +13,7 @@ class Expense {
 
     // Calcula los montos finales por participante.
     // tipo: 'igual' | 'personalizado' (igual al original)
-    private function calcularMontos($tipo, $monto, $participantesIds, $montosPersonalizados) {
+    private function calcularMontos($tipo, $monto, $participantesIds, $montosPersonalizados, $moneda) {
         $montos = [];
         $error = '';
 
@@ -45,13 +45,15 @@ class Expense {
             }
             $total = round($total, 2);
             $montoRedondeado = round($monto, 2);
-            if (abs($total - $montoRedondeado) > 0.001) {
-                return [
-                    null,
-                    'La suma de los montos personalizados debe ser exactamente Bs ' .
-                    number_format($montoRedondeado, 2) . '. Actualmente suma Bs ' .
-                    number_format($total, 2) . '.'
-                ];
+                if (abs($total - $montoRedondeado) > 0.001) {
+                    return [
+                        null,
+                        'La suma de los montos personalizados debe ser exactamente ' .
+                        (MONEDAS_LABEL[$moneda] ?? $moneda) . ' ' .
+                        number_format($montoRedondeado, 2) . '. Actualmente suma ' .
+                        (MONEDAS_LABEL[$moneda] ?? $moneda) . ' ' .
+                        number_format($total, 2) . '.'
+                    ];
             }
         }
 
@@ -66,6 +68,8 @@ class Expense {
         $informacion = trim($datos['informacion'] ?? '');
         $imagenUrl = isset($datos['imagen_url']) && $datos['imagen_url'] !== '' ? $datos['imagen_url'] : null;
         $monto = (float) ($datos['monto'] ?? 0);
+        $moneda = strtoupper(trim($datos['moneda'] ?? MONEDA_BS));
+        $tasaUsd = (float) ($datos['tasa_usd'] ?? 0);
         $fecha = $datos['fecha'] ?? date('Y-m-d');
         $pagadoPor = (int) ($datos['pagado_por'] ?? 0);
         $tipo = ($datos['tipo_division'] ?? 'igual') === 'personalizado' ? 'personalizado' : 'igual';
@@ -75,6 +79,10 @@ class Expense {
         $error = '';
         if ($titulo === '') {
             $error = 'El titulo es obligatorio.';
+        } elseif (!in_array($moneda, [MONEDA_USD, MONEDA_BS, MONEDA_USDT], true)) {
+            $error = 'La moneda seleccionada no es válida.';
+        } elseif ($tasaUsd <= 0) {
+            $error = 'La tasa USD debe ser mayor a 0.';
         } elseif ($monto <= 0) {
             $error = 'El monto debe ser mayor a 0.';
         } elseif ($pagadoPor <= 0) {
@@ -102,7 +110,7 @@ class Expense {
             }
         }
 
-        list($montos, $errorMontos) = $error === '' ? $this->calcularMontos($tipo, $monto, $limpios, $montosPersonalizados) : [null, $error];
+        list($montos, $errorMontos) = $error === '' ? $this->calcularMontos($tipo, $monto, $limpios, $montosPersonalizados, $moneda) : [null, $error];
         if ($errorMontos !== '') {
             $error = $errorMontos;
         }
@@ -114,8 +122,8 @@ class Expense {
         try {
             $this->db->beginTransaction();
 
-            $sql = "INSERT INTO gastos (grupo_id, user_id, pagado_por, concepto, informacion, imagen_url, monto, tipo_division, fecha, estado, creado_en)
-                    VALUES (:grupo_id, :user_id, :pagado_por, :titulo, :informacion, :imagen_url, :monto, :tipo_division, :fecha, 'activo', NOW())
+                $sql = "INSERT INTO gastos (grupo_id, user_id, pagado_por, concepto, informacion, imagen_url, monto, moneda, tasa_usd, tipo_division, fecha, estado, creado_en)
+                    VALUES (:grupo_id, :user_id, :pagado_por, :titulo, :informacion, :imagen_url, :monto, :moneda, :tasa_usd, :tipo_division, :fecha, 'activo', NOW())
                     RETURNING id";
             $stmt = $this->db->prepare($sql);
             $stmt->execute([
@@ -126,19 +134,22 @@ class Expense {
                 ':informacion' => $informacion !== '' ? $informacion : null,
                 ':imagen_url' => $imagenUrl,
                 ':monto' => $monto,
+                ':moneda' => $moneda,
+                ':tasa_usd' => round($tasaUsd, 6),
                 ':tipo_division' => $tipo === 'igual' ? 'igualitaria' : 'personalizada',
                 ':fecha' => $fecha
             ]);
             $gastoId = $stmt->fetchColumn();
 
-            $sql = "INSERT INTO gasto_participantes (gasto_id, usuario_id, monto_correspondiente)
-                    VALUES (:gasto_id, :usuario_id, :monto)";
+                $sql = "INSERT INTO gasto_participantes (gasto_id, usuario_id, monto_correspondiente, monto_correspondiente_usd)
+                    VALUES (:gasto_id, :usuario_id, :monto, :monto_usd)";
             $stmt = $this->db->prepare($sql);
             foreach ($montos as $participanteId => $montoParticipante) {
                 $stmt->execute([
                     ':gasto_id' => $gastoId,
                     ':usuario_id' => $participanteId,
                     ':monto' => $montoParticipante
+                    , ':monto_usd' => round($montoParticipante * $tasaUsd, 2)
                 ]);
             }
 
@@ -177,7 +188,7 @@ class Expense {
     // Detalle completo para la API JSON (modal "Ver gasto")
     public function getById($id, $usuarioId) {
         $sql = "SELECT g.id, g.grupo_id, g.concepto as titulo, g.informacion, g.imagen_url, g.monto, g.fecha,
-                       g.creado_en, g.estado, g.pagado_por, g.tipo_division, g.user_id,
+                       g.creado_en, g.estado, g.pagado_por, g.tipo_division, g.user_id, g.moneda, g.tasa_usd,
                        COALESCE(u.nombre, 'â€”') AS pagado_por_nombre
                 FROM gastos g
                 LEFT JOIN users u ON u.id = g.pagado_por
@@ -195,14 +206,20 @@ class Expense {
 
         $totalParticipantes = 0.0;
         $totalPendiente = 0.0;
+        $totalPendienteUsd = 0.0;
         foreach ($participantes as $p) {
             $totalParticipantes += (float) $p['monto_correspondiente'];
             if ((int) $p['usuario_id'] !== (int) $gasto['pagado_por']) {
                 $pendiente = (float) $p['monto_correspondiente'] - (float) $p['monto_pagado'];
+                $pendienteUsd = (float) $p['monto_correspondiente_usd'] - (float) $p['monto_pagado_usd'];
                 if ($pendiente < 0) {
                     $pendiente = 0;
                 }
+                if ($pendienteUsd < 0) {
+                    $pendienteUsd = 0;
+                }
                 $totalPendiente += $pendiente;
+                $totalPendienteUsd += $pendienteUsd;
             }
         }
 
@@ -215,13 +232,15 @@ class Expense {
                 'total_gasto' => (float) $gasto['monto'],
                 'total_participantes' => $totalParticipantes,
                 'total_pendiente' => $totalPendiente,
+                'total_pendiente_usd' => round($totalPendienteUsd, 2),
                 'coincide' => $coincide
             ]
         ];
     }
 
     public function getParticipantes($gastoId) {
-        $sql = "SELECT gp.id, gp.usuario_id, u.nombre, gp.monto_correspondiente, gp.monto_pagado,
+        $sql = "SELECT gp.id, gp.usuario_id, u.nombre, gp.monto_correspondiente, gp.monto_correspondiente_usd,
+                   gp.monto_pagado, gp.monto_pagado_usd,
                        gp.estado_pago, gp.fecha_pago
                 FROM gasto_participantes gp
                 JOIN users u ON u.id = gp.usuario_id
@@ -258,6 +277,8 @@ class Expense {
         $titulo = trim($datos['concepto'] ?? '');
         $informacion = trim($datos['informacion'] ?? '');
         $monto = (float) ($datos['monto'] ?? 0);
+        $moneda = strtoupper(trim($datos['moneda'] ?? ($actual['moneda'] ?? MONEDA_BS)));
+        $tasaUsd = (float) ($datos['tasa_usd'] ?? ($actual['tasa_usd'] ?? 0));
         $fecha = $datos['fecha'] ?? $actual['fecha'];
         $pagadoPor = (int) ($datos['pagado_por'] ?? 0);
         $tipo = ($datos['tipo_division'] ?? 'igual') === 'personalizado' ? 'personalizado' : 'igual';
@@ -267,6 +288,10 @@ class Expense {
         $error = '';
         if ($titulo === '') {
             $error = 'El tÃ­tulo es obligatorio.';
+        } elseif (!in_array($moneda, [MONEDA_USD, MONEDA_BS, MONEDA_USDT], true)) {
+            $error = 'La moneda seleccionada no es válida.';
+        } elseif ($tasaUsd <= 0) {
+            $error = 'La tasa USD debe ser mayor a 0.';
         } elseif ($monto <= 0) {
             $error = 'El monto debe ser mayor a 0.';
         } elseif ($pagadoPor <= 0) {
@@ -292,7 +317,7 @@ class Expense {
             }
         }
 
-        list($montos, $errorMontos) = $error === '' ? $this->calcularMontos($tipo, $monto, $limpios, $montosPersonalizados) : [null, $error];
+        list($montos, $errorMontos) = $error === '' ? $this->calcularMontos($tipo, $monto, $limpios, $montosPersonalizados, $moneda) : [null, $error];
         if ($errorMontos !== '') {
             $error = $errorMontos;
         }
@@ -304,14 +329,17 @@ class Expense {
         try {
             $this->db->beginTransaction();
 
-            $sql = "UPDATE gastos SET concepto = :titulo, informacion = :informacion, monto = :monto,
-                    pagado_por = :pagado_por, tipo_division = :tipo_division, fecha = :fecha
+                $sql = "UPDATE gastos SET concepto = :titulo, informacion = :informacion, monto = :monto,
+                    moneda = :moneda, tasa_usd = :tasa_usd, pagado_por = :pagado_por,
+                    tipo_division = :tipo_division, fecha = :fecha
                     WHERE id = :id";
             $stmt = $this->db->prepare($sql);
             $stmt->execute([
                 ':titulo' => $titulo,
                 ':informacion' => $informacion !== '' ? $informacion : null,
                 ':monto' => $monto,
+                ':moneda' => $moneda,
+                ':tasa_usd' => round($tasaUsd, 6),
                 ':pagado_por' => $pagadoPor,
                 ':tipo_division' => $tipo === 'igual' ? 'igualitaria' : 'personalizada',
                 ':fecha' => $fecha,
@@ -321,14 +349,15 @@ class Expense {
             $stmt = $this->db->prepare("DELETE FROM gasto_participantes WHERE gasto_id = :gasto_id");
             $stmt->execute([':gasto_id' => $id]);
 
-            $sql = "INSERT INTO gasto_participantes (gasto_id, usuario_id, monto_correspondiente)
-                    VALUES (:gasto_id, :usuario_id, :monto)";
+                $sql = "INSERT INTO gasto_participantes (gasto_id, usuario_id, monto_correspondiente, monto_correspondiente_usd)
+                    VALUES (:gasto_id, :usuario_id, :monto, :monto_usd)";
             $stmt = $this->db->prepare($sql);
             foreach ($montos as $participanteId => $montoParticipante) {
                 $stmt->execute([
                     ':gasto_id' => $id,
                     ':usuario_id' => $participanteId,
                     ':monto' => $montoParticipante
+                    , ':monto_usd' => round($montoParticipante * $tasaUsd, 2)
                 ]);
             }
 
@@ -382,6 +411,8 @@ class Expense {
                 'titulo' => $gasto['concepto'],
                 'informacion' => $gasto['informacion'],
                 'monto' => $gasto['monto'],
+                'moneda' => $gasto['moneda'],
+                'tasa_usd' => $gasto['tasa_usd'],
                 'fecha' => $gasto['fecha'],
                 'pagado_por' => $gasto['pagado_por'],
                 'tipo_division' => $gasto['tipo_division'] === 'personalizada' ? 'personalizado' : 'igual',

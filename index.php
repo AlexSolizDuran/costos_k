@@ -577,6 +577,12 @@ switch ($action) {
         $tituloPagina = 'Agregar gasto';
         $grupo = $grupoModel->findById($grupoId, $usuarioId);
         $integrantes = $grupoModel->getIntegrantes($grupoId);
+        $tasas = (new ExchangeRate(Database::getInstance()))->obtenerTasas();
+        $tasasUsdPorMoneda = [
+            MONEDA_USD => 1.0,
+            MONEDA_BS => 1.0 / max((float) $tasas['bs_por_usd'], 0.000001),
+            MONEDA_USDT => (float) $tasas['bs_por_usdt'] / max((float) $tasas['bs_por_usd'], 0.000001)
+        ];
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($grupo['estado'] !== 'activo') {
@@ -618,6 +624,8 @@ switch ($action) {
                     'informacion' => $_POST['informacion'] ?? '',
                     'imagen_url' => $imagenUrl,
                     'monto' => $_POST['monto'] ?? 0,
+                    'moneda' => $_POST['moneda'] ?? MONEDA_BS,
+                    'tasa_usd' => $_POST['tasa_usd'] ?? 0,
                     'fecha' => $_POST['fecha'] ?? '',
                     'pagado_por' => $_POST['pagado_por'] ?? 0,
                     'tipo_division' => $_POST['tipo_division'] ?? 'igual',
@@ -702,6 +710,8 @@ switch ($action) {
             'concepto' => $_POST['concepto'] ?? '',
             'informacion' => $_POST['informacion'] ?? '',
             'monto' => $_POST['monto'] ?? 0,
+            'moneda' => $_POST['moneda'] ?? MONEDA_BS,
+            'tasa_usd' => $_POST['tasa_usd'] ?? 0,
             'fecha' => $_POST['fecha'] ?? '',
             'pagado_por' => $_POST['pagado_por'] ?? 0,
             'tipo_division' => $_POST['tipo_division'] ?? 'igual',

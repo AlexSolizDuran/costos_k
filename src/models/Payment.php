@@ -19,7 +19,7 @@ class Payment {
         $monto = (float) $monto;
         $informacion = trim($informacion);
 
-        $sql = "SELECT g.id, g.grupo_id, g.concepto as titulo, g.pagado_por, g.estado
+        $sql = "SELECT g.id, g.grupo_id, g.concepto as titulo, g.pagado_por, g.estado, g.tasa_usd
                 FROM gastos g
                 WHERE g.id = :gasto_id";
         $stmt = $this->db->prepare($sql);
@@ -82,12 +82,14 @@ class Payment {
 
             $sql = "UPDATE gasto_participantes
                     SET monto_pagado = :monto_pagado,
+                    monto_pagado_usd = :monto_pagado_usd,
                         estado_pago = :estado_pago,
                         fecha_pago = CASE WHEN :estado_pago_fecha = 'pagado' THEN CURRENT_TIMESTAMP ELSE fecha_pago END
                     WHERE gasto_id = :gasto_id AND usuario_id = :usuario_id";
             $stmt = $this->db->prepare($sql);
             $stmt->execute([
                 ':monto_pagado' => $nuevoPagado,
+                ':monto_pagado_usd' => round($nuevoPagado * (float) $gasto['tasa_usd'], 2),
                 ':estado_pago' => $nuevoEstado,
                 ':estado_pago_fecha' => $nuevoEstado,
                 ':gasto_id' => $gastoId,

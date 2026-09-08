@@ -65,7 +65,7 @@ $esAdminGrupo = ($rolActual === 'admin');
             </div>
             <div class="acciones-invitacion">
                 <button type="button" class="btn-inv btn-inv-descargar" id="btnDescargarQR" onclick="descargarQR()" disabled>
-                    <span class="btn-inv-ico">⬇️</span> Descargar QR
+                    <span class="btn-inv-ico">⬇︝</span> Descargar QR
                 </button>
                 <button type="button" class="btn-inv btn-inv-regenerar" onclick="generarInvitacion()">
                     <span class="btn-inv-ico">🔄</span> Generar enlace nuevo
@@ -156,8 +156,17 @@ $esAdminGrupo = ($rolActual === 'admin');
             <input type="text" name="concepto" maxlength="150" required>
             <label> Información adicional </label>
             <textarea name="informacion" rows="3"></textarea>
-            <label> Monto total (Bs) </label>
+            <label> Moneda </label>
+            <select name="moneda" id="modificarGastoMoneda" required>
+                <?php foreach (MONEDAS_LABEL as $codigo => $etiqueta): ?>
+                    <option value="<?= e($codigo) ?>"><?= e($etiqueta) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <label> Monto total (<span id="modificarEtiquetaMonto">Moneda</span>) </label>
             <input type="number" step="0.01" min="0.01" name="monto" id="modificarGastoMonto" required>
+            <label> Tasa USD (US$ por 1 unidad) </label>
+            <input type="number" step="0.000001" min="0.000001" name="tasa_usd" id="modificarGastoTasa" required>
+            <p id="modificarPreviewUsd" style="font-size:13px; color:#666; margin:6px 0 12px;"></p>
             <label> Fecha </label>
             <input type="date" name="fecha" required>
             <label> Pagado por </label>
@@ -182,8 +191,13 @@ $esAdminGrupo = ($rolActual === 'admin');
 
 <script src="assets/js/qrcode.min.js"></script>
 <script>
-    const BS_FORMAT = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    function bsFmt(n) { return 'Bs ' + BS_FORMAT.format(n); }
+    const MONEDA_FORMAT = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const MONEDA_LABELS = <?= json_encode(MONEDAS_LABEL, JSON_UNESCAPED_UNICODE) ?>;
+    function montoFmt(n, moneda) { return (MONEDA_LABELS[moneda] || moneda) + ' ' + MONEDA_FORMAT.format(n); }
+    function montoConUsdFmt(n, moneda, tasa, usd) {
+        const equivalente = typeof usd === 'number' && !Number.isNaN(usd) ? usd : n * tasa;
+        return montoFmt(n, moneda) + '<br><small style="color:#666;">≈ US$ ' + MONEDA_FORMAT.format(equivalente) + '</small>';
+    }
     function cerrarModal(id) { document.getElementById(id).style.display = 'none'; }
     function abrirModal(id) { document.getElementById(id).style.display = 'flex'; }
 
@@ -325,15 +339,16 @@ $esAdminGrupo = ($rolActual === 'admin');
             participantes.forEach(function (p) {
                 const idP = Number(p.usuario_id);
                 const pendiente = Math.max(0, (Number(p.monto_correspondiente) - Number(p.monto_pagado)));
+                    const pendienteUsd = Math.max(0, (Number(p.monto_correspondiente_usd) - Number(p.monto_pagado_usd)));
                 const puedePagar = (idP !== pagador) && (Number(p.monto_correspondiente) - Number(p.monto_pagado) > 0.001) && g.estado === 'activo';
                 const accion = puedePagar
                     ? '<button type="button" class="accion" onclick="abrirRegistrarPago(' + g.id + ', ' + idP + ', \'' + p.nombre.replace(/'/g, "\\'") + '\', ' + pendiente.toFixed(2) + ')"> Registrar pago </button>'
                     : '';
                 filas += '<tr>' +
                     '<td>' + (idP === pagador ? '<strong>' + p.nombre + ' (pagó)</strong>' : p.nombre) + '</td>' +
-                    '<td>' + bsFmt(Number(p.monto_correspondiente)) + '</td>' +
-                    '<td>' + bsFmt(Number(p.monto_pagado)) + '</td>' +
-                    (idP === pagador ? '<td>—</td>' : '<td>' + bsFmt(Math.max(0, Number(p.monto_correspondiente) - Number(p.monto_pagado))) + '</td>') +
+                    '<td>' + montoConUsdFmt(Number(p.monto_correspondiente), g.moneda, Number(g.tasa_usd), Number(p.monto_correspondiente_usd)) + '</td>' +
+                    '<td>' + montoConUsdFmt(Number(p.monto_pagado), g.moneda, Number(g.tasa_usd), Number(p.monto_pagado_usd)) + '</td>' +
+                    (idP === pagador ? '<td>—</td>' : '<td>' + montoConUsdFmt(pendiente, g.moneda, Number(g.tasa_usd), pendienteUsd) + '</td>') +
                     '<td>' + mostrarEstadoPago(p.estado_pago) + '</td>' +
                     '<td>' + accion + '</td>' +
                     '</tr>';
@@ -343,11 +358,12 @@ $esAdminGrupo = ($rolActual === 'admin');
                 : '';
             document.getElementById('contenidoGasto').innerHTML =
                 '<p style="color:#666;">' + (g.informacion || '') + ' &nbsp;|&nbsp; Fecha: ' + g.fecha + '</p>' +
+                '<p><strong>Total:</strong> ' + montoConUsdFmt(Number(g.monto), g.moneda, Number(g.tasa_usd)) + '</p>' +
                 imagenHtml +
                 '<div class="tabla-contenedor"><table>' +
                 '<thead><tr><th>Integrante</th><th>Monto</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Acción</th></tr></thead>' +
                 '<tbody>' + filas + '</tbody></table></div>' +
-                '<p style="margin-top:15px;"><strong>Total pendiente:</strong> ' + bsFmt(Number(resumen.total_pendiente)) + '</p>';
+                '<p style="margin-top:15px;"><strong>Total pendiente:</strong> ' + montoConUsdFmt(Number(resumen.total_pendiente), g.moneda, Number(g.tasa_usd), Number(resumen.total_pendiente_usd)) + '</p>';
         }).catch(function () { cont.innerHTML = '<p>Error de conexión.</p>'; });
     }
 
@@ -359,7 +375,7 @@ $esAdminGrupo = ($rolActual === 'admin');
         document.getElementById('registrarMonto').value = pendiente.toFixed(2);
         document.getElementById('registrarInformacion').value = '';
         document.getElementById('registrarMonto').max = pendiente.toFixed(2);
-        document.getElementById('ayudaRegistrarPago').textContent = 'Pendiente de ' + nombre + ': ' + bsFmt(pendiente);
+        document.getElementById('ayudaRegistrarPago').textContent = 'Pendiente de ' + nombre + ': ' + montoFmt(pendiente, window.monedaGastoActual || 'BS');
         abrirModal('modalRegistrarPago');
     }
 
@@ -374,7 +390,7 @@ $esAdminGrupo = ($rolActual === 'admin');
             html += '<label style="display:flex; align-items:center; gap:8px; font-weight:normal; cursor:pointer;">' +
                 '<input type="checkbox" name="participantes[]" value="' + int.usuario_id + '" style="width:auto;" ' + (esta ? 'checked' : '') + ' onchange="actualizarMontosModificar()"> ' +
                 int.nombre +
-                (tipo === 'personalizado' ? ' <input type="number" step="0.01" min="0" name="monto_personalizado[' + int.usuario_id + ']" style="width:120px; margin-left:auto;" placeholder="Bs">' : '') +
+                (tipo === 'personalizado' ? ' <input type="number" step="0.01" min="0" name="monto_personalizado[' + int.usuario_id + ']" style="width:120px; margin-left:auto;" placeholder="' + (MONEDA_LABELS[document.getElementById('modificarGastoMoneda').value] || '') + '">' : '') +
                 '</label>';
         });
         html += '<p id="infoModificarGasto" style="font-size:13px; color:#666;"></p>';
@@ -393,13 +409,21 @@ $esAdminGrupo = ($rolActual === 'admin');
         if (tipo === 'igual') {
             const sel = document.querySelectorAll('#formModificarGasto input[name="participantes[]"]:checked');
             const monto = parseFloat(document.getElementById('modificarGastoMonto').value) || 0;
-            if (sel.length > 0) info.textContent = 'Cada participante pagará ' + bsFmt(Math.round(monto * 100 / sel.length) / 100);
+            const moneda = document.getElementById('modificarGastoMoneda').value;
+            if (sel.length > 0) info.textContent = 'Cada participante pagará ' + montoFmt(Math.round(monto * 100 / sel.length) / 100, moneda);
             else info.textContent = '';
         } else {
             let total = 0;
             document.querySelectorAll('#formModificarGasto input[name^="monto_personalizado["]').forEach(function (c) { total += parseFloat(c.value) || 0; });
-            info.textContent = 'Suma: ' + bsFmt(total);
+            info.textContent = 'Suma: ' + montoFmt(total, document.getElementById('modificarGastoMoneda').value);
         }
+        actualizarPreviewModificar();
+    }
+    function actualizarPreviewModificar() {
+        const monto = parseFloat(document.getElementById('modificarGastoMonto').value) || 0;
+        const tasa = parseFloat(document.getElementById('modificarGastoTasa').value) || 0;
+        document.getElementById('modificarEtiquetaMonto').textContent = MONEDA_LABELS[document.getElementById('modificarGastoMoneda').value] || '';
+        document.getElementById('modificarPreviewUsd').textContent = monto > 0 && tasa > 0 ? '≈ US$ ' + (monto * tasa).toFixed(2) : '';
     }
     function abrirModificarGasto(id) {
         document.getElementById('errorModificarGasto').style.display = 'none';
@@ -411,6 +435,7 @@ $esAdminGrupo = ($rolActual === 'admin');
                 return;
             }
             const g = data.gasto;
+            window.monedaGastoActual = g.moneda;
             modificarGastos = { integrantes: data.integrantes, participantes: data.participantes };
             document.getElementById('modificarGastoId').value = g.id;
             document.getElementById('modificarGrupoId').value = g.grupo_id;
@@ -418,6 +443,9 @@ $esAdminGrupo = ($rolActual === 'admin');
             document.querySelector('#formModificarGasto input[name="concepto"]').value = g.titulo;
             document.querySelector('#formModificarGasto textarea[name="informacion"]').value = g.informacion || '';
             document.getElementById('modificarGastoMonto').value = Number(g.monto).toFixed(2);
+            document.getElementById('modificarGastoMoneda').value = g.moneda;
+            document.getElementById('modificarGastoTasa').value = Number(g.tasa_usd).toFixed(6);
+            window.monedaGastoActual = g.moneda;
             document.querySelector('#formModificarGasto input[name="fecha"]').value = g.fecha;
             const selPagado = document.getElementById('modificarPagadoPor');
             selPagado.innerHTML = '';
@@ -455,6 +483,9 @@ $esAdminGrupo = ($rolActual === 'admin');
             }
         });
     });
+    document.getElementById('modificarGastoMoneda').addEventListener('change', actualizarMontosModificar);
+    document.getElementById('modificarGastoMonto').addEventListener('input', actualizarMontosModificar);
+    document.getElementById('modificarGastoTasa').addEventListener('input', actualizarPreviewModificar);
 
     document.querySelectorAll('.modal-overlay').forEach(function (overlay) {
         overlay.addEventListener('click', function (ev) {

@@ -4,7 +4,7 @@ ob_start();
 ?>
 <div class="cabecera">
     <div>
-        <a class="volver" href="?action=group_detail&id=<?= $grupoId ?>"> ← <?= htmlspecialchars($grupo['nombre']) ?> </a>
+        <a class="volver" href="?action=group_detail&id=<?= $grupoId ?>"> ↝ <?= htmlspecialchars($grupo['nombre']) ?> </a>
         <h1 class="titulo"> Gastos del grupo </h1>
     </div>
     <?php if ($grupo['estado'] === 'activo'): ?>
@@ -43,7 +43,7 @@ ob_start();
                     <tr>
                         <td><strong><?= htmlspecialchars($gasto['concepto']) ?></strong></td>
                         <td><?= nl2br(htmlspecialchars($gasto['informacion'] ?? '')) ?></td>
-                        <td><strong><?= bs($gasto['monto']) ?></strong></td>
+                        <td><strong><?= fmtMontoConUsd($gasto['monto'], $gasto['moneda'], $gasto['tasa_usd']) ?></strong></td>
                         <td><?= htmlspecialchars($gasto['pagado_por_nombre']) ?></td>
                         <td><?= fmtFechaCorta($gasto['fecha']) ?></td>
                         <td>

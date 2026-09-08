@@ -6,7 +6,7 @@ ob_start();
 ?>
 <div class="cabecera">
     <div>
-        <a class="volver" href="?action=dashboard"> ← Mis grupos </a>
+        <a class="volver" href="?action=dashboard"> ↝ Mis grupos </a>
         <h1 class="titulo"> <?= htmlspecialchars($grupo['nombre']) ?> </h1>
     </div>
 </div>
@@ -209,7 +209,7 @@ ob_start();
                     <tr>
                         <td><strong><?= htmlspecialchars($gasto['concepto']) ?></strong></td>
                         <td><?= nl2br(htmlspecialchars($gasto['informacion'] ?? '')) ?></td>
-                        <td><strong><?= bs($gasto['monto']) ?></strong></td>
+                        <td><strong><?= fmtMontoConUsd($gasto['monto'], $gasto['moneda'], $gasto['tasa_usd']) ?></strong></td>
                         <td><?= htmlspecialchars($gasto['pagado_por_nombre']) ?></td>
                         <td><?= fmtFechaCorta($gasto['fecha']) ?></td>
                         <td>
