@@ -80,7 +80,7 @@ class Expense {
         if ($titulo === '') {
             $error = 'El titulo es obligatorio.';
         } elseif (!in_array($moneda, [MONEDA_USD, MONEDA_BS, MONEDA_USDT], true)) {
-            $error = 'La moneda seleccionada no es válida.';
+            $error = 'La moneda seleccionada no es vï¿½lida.';
         } elseif ($tasaUsd <= 0) {
             $error = 'La tasa USD debe ser mayor a 0.';
         } elseif ($monto <= 0) {
@@ -289,7 +289,7 @@ class Expense {
         if ($titulo === '') {
             $error = 'El tÃ­tulo es obligatorio.';
         } elseif (!in_array($moneda, [MONEDA_USD, MONEDA_BS, MONEDA_USDT], true)) {
-            $error = 'La moneda seleccionada no es válida.';
+            $error = 'La moneda seleccionada no es vï¿½lida.';
         } elseif ($tasaUsd <= 0) {
             $error = 'La tasa USD debe ser mayor a 0.';
         } elseif ($monto <= 0) {
@@ -424,28 +424,30 @@ class Expense {
     }
 
     public function getTotalByGroup($grupoId) {
-        $sql = "SELECT SUM(monto) as total, COUNT(*) as cantidad
-                FROM gastos WHERE grupo_id = :grupo_id AND estado = 'activo'";
+        $sql = "SELECT SUM(g.monto * g.tasa_usd) as total_usd, COUNT(*) as cantidad
+                FROM gastos g WHERE g.grupo_id = :grupo_id AND g.estado = 'activo'";
         $stmt = $this->db->prepare($sql);
         $stmt->execute([':grupo_id' => $grupoId]);
         return $stmt->fetch();
     }
 
-    // Deudores del grupo con su deuda total y el desglose por gasto.
+    // Deudores del grupo con su deuda total (en US$) y el desglose por gasto.
     // Un deudor es un integrante con saldo pendiente>0 en un gasto activo
-    // donde no es el pagador. Devuelve array con 'usuario_id','nombre','total'
-    // y 'deudas' (concepto, monto, gasto_id, fecha).
+    // donde no es el pagador. Devuelve array con 'usuario_id','nombre','total',
+    // 'total_usd' y 'deudas' (concepto, monto, monto_usd, moneda, tasa_usd,
+    // gasto_id, fecha).
     public function getDeudores($grupoId) {
         $sql = "SELECT gp.usuario_id, u.nombre,
-                       g.id AS gasto_id, g.concepto, g.fecha,
-                       (gp.monto_correspondiente - gp.monto_pagado) AS pendiente
+                       g.id AS gasto_id, g.concepto, g.fecha, g.moneda, g.tasa_usd,
+                       (gp.monto_correspondiente - gp.monto_pagado) AS pendiente,
+                       (gp.monto_correspondiente_usd - gp.monto_pagado_usd) AS pendiente_usd
                 FROM gasto_participantes gp
                 JOIN gastos g ON g.id = gp.gasto_id
                 JOIN users u ON u.id = gp.usuario_id
                 WHERE g.grupo_id = :grupo_id
                   AND g.estado = 'activo'
                   AND gp.usuario_id <> g.pagado_por
-                  AND gp.monto_correspondiente - gp.monto_pagado > 0.001
+                  AND gp.monto_correspondiente_usd - gp.monto_pagado_usd > 0.001
                 ORDER BY u.nombre ASC, g.fecha ASC, g.id ASC";
         $stmt = $this->db->prepare($sql);
         $stmt->execute([':grupo_id' => $grupoId]);
@@ -459,28 +461,35 @@ class Expense {
                     'usuario_id' => $uid,
                     'nombre' => $fila['nombre'],
                     'total' => 0.0,
+                    'total_usd' => 0.0,
                     'deudas' => []
                 ];
             }
             $pendiente = round((float) $fila['pendiente'], 2);
+            $pendienteUsd = round((float) $fila['pendiente_usd'], 2);
             $deudores[$uid]['total'] = round($deudores[$uid]['total'] + $pendiente, 2);
+            $deudores[$uid]['total_usd'] = round($deudores[$uid]['total_usd'] + $pendienteUsd, 2);
             $deudores[$uid]['deudas'][] = [
                 'gasto_id' => (int) $fila['gasto_id'],
                 'concepto' => $fila['concepto'],
                 'fecha' => $fila['fecha'],
-                'monto' => $pendiente
+                'monto' => $pendiente,
+                'monto_usd' => $pendienteUsd,
+                'moneda' => $fila['moneda'],
+                'tasa_usd' => (float) $fila['tasa_usd']
             ];
         }
 
         return array_values($deudores);
     }
 
-    // Lo que el usuario aÃºn debe pagar en el grupo (hacia el pagador de cada gasto)
+    // Lo que el usuario aÃºn debe pagar en el grupo (en US$) hacia el
+    // pagador de cada gasto.
     public function totalPendienteDe($usuarioId, $grupoId) {
         $sql = "SELECT COALESCE(SUM(
                     CASE
-                        WHEN gp.monto_correspondiente - gp.monto_pagado < 0 THEN 0
-                        ELSE gp.monto_correspondiente - gp.monto_pagado
+                        WHEN gp.monto_correspondiente_usd - gp.monto_pagado_usd < 0 THEN 0
+                        ELSE gp.monto_correspondiente_usd - gp.monto_pagado_usd
                     END
                 ), 0) AS total
                 FROM gasto_participantes gp

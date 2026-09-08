@@ -16,7 +16,7 @@ ob_start();
 
 <div class="seccion" style="background:#eaf3fb; box-shadow:none; text-align:center;">
     <strong>Tienes pendiente de pagar:</strong>
-    <span style="font-size:1.4rem; font-weight:bold; color:#0066cc;"> <?= bs($totalPendienteUsuario) ?> </span>
+    <span style="font-size:1.4rem; font-weight:bold; color:#0066cc;"> <?= fmtUsd($totalPendienteUsuario) ?> </span>
 </div>
 
 <?php if (count($gastos) === 0): ?>

@@ -661,6 +661,35 @@ switch ($action) {
         exit;
         break;
 
+    /* ---------- Tasa online para pagar en cualquier moneda (JSON) ---------- */
+    case 'get_tasa_pago':
+        header('Content-Type: application/json; charset=utf-8');
+        $monedaTasa = strtoupper(trim((string) ($_GET['moneda'] ?? '')));
+        if (!in_array($monedaTasa, array_keys(MONEDAS_PAGO), true)) {
+            echo json_encode(['ok' => false, 'error' => 'Moneda no soportada.']);
+            exit;
+        }
+        $exchangeModel = new ExchangeRate(Database::getInstance());
+        $tasaOnline = $exchangeModel->obtenerTasaOnline($monedaTasa);
+        if ($tasaOnline !== null && $tasaOnline > 0) {
+            $exchangeModel->guardarTasaUsd($monedaTasa, $tasaOnline);
+            echo json_encode(['ok' => true, 'moneda' => $monedaTasa, 'tasa_usd' => round($tasaOnline, 6), 'origen' => 'online']);
+            exit;
+        }
+        $tasaGuardada = $exchangeModel->obtenerTasaUsdGuardada($monedaTasa);
+        if ($tasaGuardada !== null && $tasaGuardada > 0) {
+            echo json_encode(['ok' => true, 'moneda' => $monedaTasa, 'tasa_usd' => round($tasaGuardada, 6), 'origen' => 'guardada']);
+            exit;
+        }
+        $tasaGlobal = $exchangeModel->tasaUsdDe($monedaTasa);
+        if ($tasaGlobal > 0) {
+            echo json_encode(['ok' => true, 'moneda' => $monedaTasa, 'tasa_usd' => round($tasaGlobal, 6), 'origen' => 'global']);
+            exit;
+        }
+        echo json_encode(['ok' => false, 'error' => 'No se pudo obtener la tasa para ' . $monedaTasa . '. Introdúcela manualmente.']);
+        exit;
+        break;
+
     /* ---------- Registrar pago ---------- */
     case 'register_payment':
         $grupoId = 0;
@@ -668,10 +697,18 @@ switch ($action) {
             $id = (int) ($_POST['gasto_id'] ?? 0);
             $deUsuario = (int) ($_POST['usuario_id'] ?? 0);
             $monto = (float) ($_POST['monto'] ?? 0);
+            $moneda = $_POST['moneda'] ?? MONEDA_BS;
+            $tasaUsd = (float) ($_POST['tasa_usd'] ?? 0);
             $informacion = $_POST['informacion'] ?? '';
 
+            // Si el frontend no pudo aportar la tasa, se intenta derivar
+            // (online -> guardada -> global) antes de registrar.
+            if ($tasaUsd <= 0) {
+                $tasaUsd = (new ExchangeRate(Database::getInstance()))->derivarTasaPago($moneda, $tasaUsd);
+            }
+
             $paymentModel = new Payment(Database::getInstance());
-            $resultado = $paymentModel->registrar($id, $deUsuario, $monto, $informacion);
+            $resultado = $paymentModel->registrar($id, $deUsuario, $monto, $moneda, $tasaUsd, $informacion);
             $grupoId = $resultado['ok'] ? $resultado['grupo_id'] : 0;
             $flashMessages[] = $resultado['ok']
                 ? 'Pago registrado correctamente.'

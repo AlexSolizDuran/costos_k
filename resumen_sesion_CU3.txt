@@ -1,0 +1,972 @@
+====================================================================
+CU-3: PAGAR DEUDAS EN CUALQUIER MONEDA (CONVERSIÓN ONLINE A USD)
+Gestor de Gastos Compartidos (costos_k)
+====================================================================
+
+--------------------------------------------------------------------
+1) PROMPT ORIGINAL (lo que pidió el usuario)
+--------------------------------------------------------------------
+"CU-3 - Pago de deudas: cuando un integrante del grupo paga su parte
+en un gasto, debe poder hacerlo en CUALQUIER moneda (por ejemplo PEN,
+EUR, MXN, COP... además de Bs, US$ y USDT).
+
+El que paga abre el gasto (Ver gasto), pulsa Registrar pago y elige
+la moneda en la que va a pagar. El sistema debe:
+- Obtener la tasa de conversión a US$ en línea (o usar la última
+  guardada / la tasa global si no hay conexión).
+- Mostrar cuánto debe en esa moneda (su pendiente convertido) y el
+  equivalente en US$.
+- Pre-llenar automáticamente el campo 'Monto a pagar' con el pendiente
+  convertido.
+- Registrar el pago y descontar del pendiente SIEMPRE en US$
+  (conciliación en US$).
+
+El usuario final NO debe ver ni editar la tasa USD: ese campo es
+oculto y se calcula solo. La lista de monedas del pago es un catálogo
+dinámico SOLO en el modal de pago; crear/modificar gastos sigue con
+Bs/US$/USDT."
+
+(Correcciones pedidas durante la sesión:
+- No mostrar la "Tasa USD" al usuario: campo oculto, auto-calculado.
+- Pre-llenar 'Monto a pagar' con el pendiente convertido.
+- Si el usuario edita el monto a mano, respetarlo hasta que cambie
+  de moneda.
+- Si el backend no recibe tasa, derivarla: online -> guardada ->
+  global.)
+
+--------------------------------------------------------------------
+2) CÓDIGO IMPLEMENTADO
+--------------------------------------------------------------------
+
+--------------------------------------------------------------------
+2.1) config/constants.php
+--------------------------------------------------------------------
+<?php
+// config/constants.php - Definiciones únicas para evitar strings mágicos
+define('ROL_ADMIN', 'admin');
+define('ROL_MEMBRO', 'miembro');
+define('ESTATUS_ACTIVO', 'activo');
+define('ESTATUS_CERRADO', 'cerrado');
+define('ESTATUS_SALIDO', 'salido');
+define('TIPO_IGUALITARIO', 'igualitario');
+define('TIPO_PERSONALIZADO', 'personalizado');
+define('MENSAJE_BIENVENIDA', 'Bienvenido a TOPICOS');
+define('TITULO_APP', 'Gestor de Gastos Compartidos');
+
+// ------------------------------------------------------------
+// Multi-moneda: monedas soportadas y tasas globales por defecto
+// ------------------------------------------------------------
+define('MONEDA_USD', 'USD');     // Dólares americanos físicos
+define('MONEDA_BS', 'BS');       // Bolivianos
+define('MONEDA_USDT', 'USDT');   // USDT (crypto)
+
+define('CLAVE_BS_POR_USD', 'bs_por_usd');     // Bs que vale 1 US$
+define('CLAVE_BS_POR_USDT', 'bs_por_usdt');   // Bs que vale 1 USDT
+define('DEFAULT_BS_POR_USD', 6.96);
+define('DEFAULT_BS_POR_USDT', 7.30);
+
+// Etiquetas de presentación por moneda
+define('MONEDAS_LABEL', [
+    MONEDA_USD => 'US$',
+    MONEDA_BS => 'Bs',
+    MONEDA_USDT => 'USDT'
+]);
+
+// ------------------------------------------------------------
+// Catálogo de monedas aceptadas AL PAGAR (cualquier moneda).
+// El código es la clave; el valor es el nombre mostrado en el selector.
+// ------------------------------------------------------------
+define('MONEDAS_PAGO', [
+    MONEDA_USD  => 'Dólar estadounidense',
+    MONEDA_BS   => 'Bolívares',
+    MONEDA_USDT => 'USDT (cripto)',
+    'PEN' => 'Sol peruano',
+    'EUR' => 'Euro',
+    'MXN' => 'Peso mexicano',
+    'COP' => 'Peso colombiano',
+    'CLP' => 'Peso chileno',
+    'ARS' => 'Peso argentino',
+    'BRL' => 'Real brasileño'
+]);
+
+// Etiquetas cortas (símbolo) por moneda del catálogo de pago
+define('MONEDAS_PAGO_LABEL', [
+    MONEDA_USD  => 'US$',
+    MONEDA_BS   => 'Bs',
+    MONEDA_USDT => 'USDT',
+    'PEN' => 'S/',
+    'EUR' => '€',
+    'MXN' => 'MX$',
+    'COP' => 'CO$',
+    'CLP' => 'CL$',
+    'ARS' => 'AR$',
+    'BRL' => 'R$'
+]);
+define('MONEDAS_NOMBRE', [
+    MONEDA_USD => 'Dólares americanos físicos',
+    MONEDA_BS => 'Bolivianos',
+    MONEDA_USDT => 'USDT'
+]);
+?>
+
+--------------------------------------------------------------------
+2.2) sql/pago_multi_moneda.sql  (NUEVO)
+--------------------------------------------------------------------
+-- ============================================================
+-- sql/pago_multi_moneda.sql
+-- Migración idempotente: pagos en cualquier moneda.
+--   * Pagos registran su moneda, la tasa USD del momento y el
+--     equivalente en US$.
+--   * Backfill de pagos legacy (eran en la moneda del gasto).
+-- ============================================================
+
+ALTER TABLE pagos ADD COLUMN IF NOT EXISTS moneda VARCHAR(10) NOT NULL DEFAULT 'BS';
+ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tasa_usd NUMERIC(12,6) NOT NULL DEFAULT 0;
+ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_usd NUMERIC(12,2) NOT NULL DEFAULT 0;
+
+-- Datos legacy: los pagos anteriores se registraron en la moneda
+-- del gasto. Se les estima su equivalente USD con la tasa del gasto.
+UPDATE pagos p
+SET moneda = g.moneda,
+        tasa_usd = g.tasa_usd,
+        monto_usd = ROUND(p.monto * g.tasa_usd, 2)
+FROM gastos g
+WHERE g.id = p.gasto_id
+    AND p.tasa_usd = 0;
+
+--------------------------------------------------------------------
+2.3) sql/ejecutar.php  (modificado: ahora incluye el nuevo archivo)
+--------------------------------------------------------------------
+<?php
+// sql/ejecutar.php
+// Aplicador de migraciones. Ejecuta los archivos .sql del directorio sql/
+// contra la BD en orden. Uso (desde CLI o navegador):
+//   php sql/ejecutar.php
+// Son idempotentes: se puede ejecutar varias veces sin romper nada.
+
+require __DIR__ . '/../src/models/Database.php';
+
+$archivos = ['migracion.sql', 'multi_moneda.sql', 'pago_multi_moneda.sql'];
+
+// Separa un archivo SQL en sentencias individuales por ";" al final de línea.
+function dividirSql($sql) {
+    // Se quitan las líneas de comentario (--) para que no contaminen los bloques
+    $sqlSinComentarios = preg_replace('/^\s*--[^\n]*$/m', '', $sql);
+
+    // PDO pgsql con pdo_pgsql no permite múltiples sentencias por defecto;
+    // se ejecutan delimitando por ";" al final de línea.
+    $sentencias = [];
+    foreach (preg_split('/;\s*\n/', $sqlSinComentarios) as $bloque) {
+        $bloque = trim($bloque);
+        if ($bloque === '') {
+            continue;
+        }
+        $sentencias[] = $bloque;
+    }
+    return $sentencias;
+}
+
+$total = 0;
+try {
+    $pdo = Database::getInstance();
+
+    foreach ($archivos as $archivo) {
+        $sqlPath = __DIR__ . '/' . $archivo;
+        if (!file_exists($sqlPath)) {
+            echo "[AVISO] No se encontró " . $archivo . ", se omite." . PHP_EOL;
+            continue;
+        }
+        $sql = file_get_contents($sqlPath);
+        $sentencias = dividirSql($sql);
+
+        $pdo->beginTransaction();
+        foreach ($sentencias as $st) {
+            $pdo->exec($st);
+        }
+        $pdo->commit();
+
+        $total += count($sentencias);
+        echo "[OK] " . $archivo . " aplicado (" . count($sentencias) . " sentencias)." . PHP_EOL;
+    }
+
+    echo "[OK] Migración completa (" . $total . " sentencias en total)." . PHP_EOL;
+} catch (PDOException $e) {
+    if (isset($pdo) && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    die("[ERROR] " . $e->getMessage() . PHP_EOL);
+}
+
+--------------------------------------------------------------------
+2.4) src/models/ExchangeRate.php  (modificado: tasas online + guardadas)
+--------------------------------------------------------------------
+<?php
+// src/models/ExchangeRate.php - Modelo de tipos de cambio (backend puro, sin HTML)
+// Base de conciliación: US$. Monedas soportadas: US$ físicos, Bs y USDT.
+// La moneda USDT NO se asume 1:1 con el US$, se deriva de las tasas globales.
+
+class ExchangeRate {
+    private $db;
+
+    public function __construct($db = null) {
+        if ($db === null) {
+            $db = Database::getInstance();
+        }
+        $this->db = $db;
+    }
+
+    // Devuelve las tasas globales vigentes ['bs_por_usd'=>float, 'bs_por_usdt'=>float].
+    // Si la tabla no tiene valores, usa los valores por defecto.
+    public function obtenerTasas() {
+        $sql = "SELECT clave, valor FROM configuracion
+                WHERE clave IN (:c_usd, :c_usdt)";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            ':c_usd' => CLAVE_BS_POR_USD,
+            ':c_usdt' => CLAVE_BS_POR_USDT
+        ]);
+
+        $tasas = [
+            'bs_por_usd' => (float) DEFAULT_BS_POR_USD,
+            'bs_por_usdt' => (float) DEFAULT_BS_POR_USDT
+        ];
+
+        foreach ($stmt->fetchAll() as $fila) {
+            $valor = (float) $fila['valor'];
+            if ($fila['clave'] === CLAVE_BS_POR_USD) {
+                $tasas['bs_por_usd'] = $valor;
+            } elseif ($fila['clave'] === CLAVE_BS_POR_USDT) {
+                $tasas['bs_por_usdt'] = $valor;
+            }
+        }
+
+        return $tasas;
+    }
+
+    public function bsPorUsd() {
+        $tasas = $this->obtenerTasas();
+        return $tasas['bs_por_usd'];
+    }
+
+    public function bsPorUsdt() {
+        $tasas = $this->obtenerTasas();
+        return $tasas['bs_por_usdt'];
+    }
+
+    // Guarda las tasas globales. Devuelve ['ok'=>bool, 'error'=>?]
+    public function guardarTasas($bsPorUsd, $bsPorUsdt) {
+        $bsPorUsd = trim(($bsPorUsd ?? ''));
+        $bsPorUsdt = trim(($bsPorUsdt ?? ''));
+
+        if ($bsPorUsd === '' || $bsPorUsdt === '') {
+            return ['ok' => false, 'error' => 'Ambos tipos de cambio son obligatorios.'];
+        }
+        if (!is_numeric($bsPorUsd) || (float) $bsPorUsd <= 0) {
+            return ['ok' => false, 'error' => 'El tipo de cambio "Bs por US$" debe ser un número mayor a 0.'];
+        }
+        if (!is_numeric($bsPorUsdt) || (float) $bsPorUsdt <= 0) {
+            return ['ok' => false, 'error' => 'El tipo de cambio "Bs por USDT" debe ser un número mayor a 0.'];
+        }
+
+        $bsPorUsd = round((float) $bsPorUsd, 6);
+        $bsPorUsdt = round((float) $bsPorUsdt, 6);
+
+        $sql = "INSERT INTO configuracion (clave, valor, actualizado)
+                VALUES (:clave, :valor, NOW())
+                ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado = NOW()";
+        $stmt = $this->db->prepare($sql);
+
+        try {
+            $this->db->beginTransaction();
+            $stmt->execute([':clave' => CLAVE_BS_POR_USD, ':valor' => $bsPorUsd]);
+            $stmt->execute([':clave' => CLAVE_BS_POR_USDT, ':valor' => $bsPorUsdt]);
+            $this->db->commit();
+            return ['ok' => true];
+        } catch (Exception $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            return ['ok' => false, 'error' => 'Error al guardar los tipos de cambio: ' . $e->getMessage()];
+        }
+    }
+
+    // Cuántos US$ vale 1 unidad de la moneda indicada, con las tasas vigentes.
+    //   USD  -> 1
+    //   BS   -> 1 / bs_por_usd
+    //   USDT -> bs_por_usdt / bs_por_usd
+    //   Otras -> tasa guardada por la API online (tasa_usd_<CODIGO>)
+    public function tasaUsdDe($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        if ($moneda === MONEDA_USD) {
+            return 1.0;
+        }
+        $tasas = $this->obtenerTasas();
+        $rUsd = $tasas['bs_por_usd'];
+        if ($moneda === MONEDA_BS) {
+            return $rUsd > 0 ? 1.0 / $rUsd : 0.0;
+        }
+        if ($moneda === MONEDA_USDT) {
+            return ($rUsd > 0) ? ($tasas['bs_por_usdt'] / $rUsd) : 0.0;
+        }
+        $guardada = $this->obtenerTasaUsdGuardada($moneda);
+        return $guardada !== null ? $guardada : 0.0;
+    }
+
+    // Tasa USD (US$ por 1 unidad) de una moneda consultada ONLINE.
+    // Fiat: open.er-api.com (base USD). USDT: CoinGecko.
+    // Devuelve float o null si no se pudo obtener.
+    public function obtenerTasaOnline($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        if ($moneda === MONEDA_USD) {
+            return 1.0;
+        }
+        if ($moneda === MONEDA_USDT) {
+            return $this->tasaUsdtOnline();
+        }
+        $iso = $moneda === MONEDA_BS ? 'VES' : $moneda;
+        $json = $this->httpGet('https://open.er-api.com/v6/latest/USD');
+        if ($json === null) {
+            return null;
+        }
+        $data = json_decode($json, true);
+        if (!isset($data['rates'][$iso])) {
+            return null;
+        }
+        $porUsd = (float) $data['rates'][$iso];
+        return $porUsd > 0 ? 1.0 / $porUsd : 0.0;
+    }
+
+    // ¿Cuántos US$ vale 1 USDT hoy (precio de Tether en USD)?
+    private function tasaUsdtOnline() {
+        $json = $this->httpGet('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd');
+        if ($json === null) {
+            return null;
+        }
+        $data = json_decode($json, true);
+        $v = $data['tether']['usd'] ?? null;
+        return $v !== null ? (float) $v : null;
+    }
+
+    private function httpGet($url) {
+        $ctx = stream_context_create(['http' => ['timeout' => 12, 'ignore_errors' => true, 'user_agent' => 'costos-k/1.0']]);
+        $resultado = @file_get_contents($url, false, $ctx);
+        return $resultado === false ? null : $resultado;
+    }
+
+    // Guarda la tasa USD (US$ por 1 unidad) de una moneda en configuracion.
+    public function guardarTasaUsd($moneda, $tasa) {
+        $moneda = strtoupper((string) $moneda);
+        $tasa = round((float) $tasa, 6);
+        if ($tasa <= 0) {
+            return false;
+        }
+        $sql = "INSERT INTO configuracion (clave, valor, actualizado)
+                VALUES (:clave, :valor, NOW())
+                ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado = NOW()";
+        $stmt = $this->db->prepare($sql);
+        try {
+            return $stmt->execute([':clave' => 'tasa_usd_' . $moneda, ':valor' => $tasa]);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    // Tasa USD guardada (por la API online) de una moneda, o null si no existe.
+    public function obtenerTasaUsdGuardada($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        $sql = "SELECT valor FROM configuracion WHERE clave = :clave";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':clave' => 'tasa_usd_' . $moneda]);
+        $valor = $stmt->fetchColumn();
+        return ($valor === null || $valor === false) ? null : (float) $valor;
+    }
+
+    // Mejor tasa USD disponible para un pago: la recibida, o se deriva de
+    // online -> guardada -> global. Devuelve 0 si ninguna es utilizable.
+    public function derivarTasaPago($moneda, $tasaActual = 0.0) {
+        $moneda = strtoupper((string) $moneda);
+        if ((float) $tasaActual > 0) {
+            return round((float) $tasaActual, 6);
+        }
+        $online = $this->obtenerTasaOnline($moneda);
+        if ($online !== null && $online > 0) {
+            $this->guardarTasaUsd($moneda, $online);
+            return round($online, 6);
+        }
+        $guardada = $this->obtenerTasaUsdGuardada($moneda);
+        if ($guardada !== null && $guardada > 0) {
+            return round($guardada, 6);
+        }
+        return round($this->tasaUsdDe($moneda), 6);
+    }
+
+    // Convierte un monto de una moneda a otra (USD, BS, USDT) con las tasas vigentes.
+    public function convertir($monto, $desde, $hasta) {
+        $monto = (float) $monto;
+        $desde = strtoupper((string) $desde);
+        $hasta = strtoupper((string) $hasta);
+
+        if ($desde === $hasta) {
+            return $monto;
+        }
+
+        $enUsd = $monto * $this->tasaUsdDe($desde);
+        $factorHasta = $this->tasaUsdDe($hasta);
+        return $factorHasta > 0 ? $enUsd / $factorHasta : 0.0;
+    }
+
+    // Etiqueta corta de presentación (US$, Bs, USDT).
+    public function etiqueta($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        return MONEDAS_LABEL[$moneda] ?? ('(' . htmlspecialchars($moneda) . ')');
+    }
+
+    public function nombre($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        return MONEDAS_NOMBRE[$moneda] ?? 'Moneda desconocida';
+    }
+
+    // True si la moneda está soportada.
+    public function esMonedaValida($moneda) {
+        return in_array(strtoupper((string) $moneda), [MONEDA_USD, MONEDA_BS, MONEDA_USDT], true);
+    }
+}
+
+--------------------------------------------------------------------
+2.5) src/models/Payment.php  (modificado: registrar() multi-moneda)
+--------------------------------------------------------------------
+<?php
+// src/models/Payment.php - Modelo de pagos (backend puro, sin HTML)
+
+class Payment {
+    private $db;
+
+    public function __construct($db = null) {
+        if ($db === null) {
+            $db = Database::getInstance();
+        }
+        $this->db = $db;
+    }
+
+    // Registra un pago de un participante hacia el pagador del gasto.
+    // Acepta cualquier moneda del catálogo MONEDAS_PAGO: el pendiente
+    // se valida y se concilia en US$ (monto_usd = monto * tasa_usd).
+    // Devuelve ['ok'=>bool, 'error'=>?, 'grupo_id'=>?]
+    public function registrar($gastoId, $deUsuario, $monto, $moneda = MONEDA_BS, $tasaUsd = 0.0, $informacion = '') {
+        $gastoId = (int) $gastoId;
+        $deUsuario = (int) $deUsuario;
+        $monto = (float) $monto;
+        $moneda = strtoupper(trim((string) $moneda));
+        $tasaUsd = (float) $tasaUsd;
+        $informacion = trim($informacion);
+
+        if (!in_array($moneda, array_keys(MONEDAS_PAGO), true)) {
+            return ['ok' => false, 'error' => 'La moneda seleccionada no es válida.'];
+        }
+
+        $sql = "SELECT g.id, g.grupo_id, g.concepto as titulo, g.pagado_por, g.estado, g.tasa_usd, g.moneda
+                FROM gastos g
+                WHERE g.id = :gasto_id";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':gasto_id' => $gastoId]);
+        $gasto = $stmt->fetch();
+
+        if (!$gasto) {
+            return ['ok' => false, 'error' => 'Gasto no encontrado.'];
+        }
+
+        if ($gasto['estado'] !== 'activo') {
+            return ['ok' => false, 'error' => 'El gasto está cerrado y no permite pagos.'];
+        }
+
+        $sql = "SELECT monto_correspondiente, monto_pagado, monto_correspondiente_usd, monto_pagado_usd, estado_pago
+                FROM gasto_participantes
+                WHERE gasto_id = :gasto_id AND usuario_id = :de_usuario";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':gasto_id' => $gastoId, ':de_usuario' => $deUsuario]);
+        $deuda = $stmt->fetch();
+
+        if (!$deuda) {
+            return ['ok' => false, 'error' => 'Esta persona no participa en este gasto.'];
+        }
+
+        if ($deUsuario === (int) $gasto['pagado_por']) {
+            return ['ok' => false, 'error' => 'El pagador no puede pagarse a sí mismo.'];
+        }
+
+        $pendienteUsd = round((float) $deuda['monto_correspondiente_usd'] - (float) $deuda['monto_pagado_usd'], 2);
+
+        if ($pendienteUsd <= 0) {
+            return ['ok' => false, 'error' => 'Esta deuda ya está pagada.'];
+        }
+        if ($monto <= 0) {
+            return ['ok' => false, 'error' => 'El monto debe ser mayor a 0.'];
+        }
+        if ($tasaUsd <= 0) {
+            return ['ok' => false, 'error' => 'La tasa USD debe ser mayor a 0.'];
+        }
+
+        $montoUsd = round($monto * $tasaUsd, 2);
+        if ($montoUsd <= 0) {
+            return ['ok' => false, 'error' => 'El monto equivale a US$ 0.00. Revisa la tasa.'];
+        }
+        if ($montoUsd > $pendienteUsd) {
+            return ['ok' => false, 'error' => 'El monto no puede ser mayor al pendiente (US$ ' . number_format($pendienteUsd, 2) . ').'];
+        }
+
+        try {
+            $this->db->beginTransaction();
+
+            $sql = "INSERT INTO pagos (grupo_id, gasto_id, de_usuario, a_usuario, monto, moneda, tasa_usd, monto_usd, informacion)
+                    VALUES (:grupo_id, :gasto_id, :de_usuario, :a_usuario, :monto, :moneda, :tasa_usd, :monto_usd, :informacion)";
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([
+                ':grupo_id' => $gasto['grupo_id'],
+                ':gasto_id' => $gastoId,
+                ':de_usuario' => $deUsuario,
+                ':a_usuario' => $gasto['pagado_por'],
+                ':monto' => $monto,
+                ':moneda' => $moneda,
+                ':tasa_usd' => $tasaUsd,
+                ':monto_usd' => $montoUsd,
+                ':informacion' => $informacion !== '' ? $informacion : null
+            ]);
+
+            $tasaGasto = (float) $gasto['tasa_usd'];
+            $factorGasto = $tasaGasto > 0 ? $tasaGasto : 1.0;
+
+            $nuevoPagadoUsd = round((float) $deuda['monto_pagado_usd'] + $montoUsd, 2);
+            $nuevoPagadoGasto = round($nuevoPagadoUsd / $factorGasto, 2);
+            $nuevoEstado = $nuevoPagadoUsd >= (float) $deuda['monto_correspondiente_usd'] ? 'pagado' : 'parcial';
+
+            $sql = "UPDATE gasto_participantes
+                    SET monto_pagado = :monto_pagado,
+                    monto_pagado_usd = :monto_pagado_usd,
+                        estado_pago = :estado_pago,
+                        fecha_pago = CASE WHEN :estado_pago_fecha = 'pagado' THEN CURRENT_TIMESTAMP ELSE fecha_pago END
+                    WHERE gasto_id = :gasto_id AND usuario_id = :usuario_id";
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([
+                ':monto_pagado' => $nuevoPagadoGasto,
+                ':monto_pagado_usd' => $nuevoPagadoUsd,
+                ':estado_pago' => $nuevoEstado,
+                ':estado_pago_fecha' => $nuevoEstado,
+                ':gasto_id' => $gastoId,
+                ':usuario_id' => $deUsuario
+            ]);
+
+            $this->db->commit();
+            return ['ok' => true, 'grupo_id' => (int) $gasto['grupo_id']];
+        } catch (Exception $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            return ['ok' => false, 'error' => 'Error al registrar el pago: ' . $e->getMessage()];
+        }
+    }
+}
+
+--------------------------------------------------------------------
+2.6) src/models/Expense.php  (modificado: conciliación en US$)
+-- Solo se muestran los métodos NUEVOS/MODIFICADOS; el resto del
+-- archivo (crear gasto, modificar, calcular montos...) quedó igual
+-- salvo que ahora graba monto_correspondiente_usd en cada participante.
+--------------------------------------------------------------------
+    // Deudores del grupo con su deuda total (en US$) y el desglose por gasto.
+    // Un deudor es un integrante con saldo pendiente>0 en un gasto activo
+    // donde no es el pagador. Devuelve array con 'usuario_id','nombre','total',
+    // 'total_usd' y 'deudas' (concepto, monto, monto_usd, moneda, tasa_usd,
+    // gasto_id, fecha).
+    public function getDeudores($grupoId) {
+        $sql = "SELECT gp.usuario_id, u.nombre,
+                       g.id AS gasto_id, g.concepto, g.fecha, g.moneda, g.tasa_usd,
+                       (gp.monto_correspondiente - gp.monto_pagado) AS pendiente,
+                       (gp.monto_correspondiente_usd - gp.monto_pagado_usd) AS pendiente_usd
+                FROM gasto_participantes gp
+                JOIN gastos g ON g.id = gp.gasto_id
+                JOIN users u ON u.id = gp.usuario_id
+                WHERE g.grupo_id = :grupo_id
+                  AND g.estado = 'activo'
+                  AND gp.usuario_id <> g.pagado_por
+                  AND gp.monto_correspondiente_usd - gp.monto_pagado_usd > 0.001
+                ORDER BY u.nombre ASC, g.fecha ASC, g.id ASC";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':grupo_id' => $grupoId]);
+        $filas = $stmt->fetchAll();
+
+        $deudores = [];
+        foreach ($filas as $fila) {
+            $uid = (int) $fila['usuario_id'];
+            if (!isset($deudores[$uid])) {
+                $deudores[$uid] = [
+                    'usuario_id' => $uid,
+                    'nombre' => $fila['nombre'],
+                    'total' => 0.0,
+                    'total_usd' => 0.0,
+                    'deudas' => []
+                ];
+            }
+            $pendiente = round((float) $fila['pendiente'], 2);
+            $pendienteUsd = round((float) $fila['pendiente_usd'], 2);
+            $deudores[$uid]['total'] = round($deudores[$uid]['total'] + $pendiente, 2);
+            $deudores[$uid]['total_usd'] = round($deudores[$uid]['total_usd'] + $pendienteUsd, 2);
+            $deudores[$uid]['deudas'][] = [
+                'gasto_id' => (int) $fila['gasto_id'],
+                'concepto' => $fila['concepto'],
+                'fecha' => $fila['fecha'],
+                'monto' => $pendiente,
+                'monto_usd' => $pendienteUsd,
+                'moneda' => $fila['moneda'],
+                'tasa_usd' => (float) $fila['tasa_usd']
+            ];
+        }
+
+        return array_values($deudores);
+    }
+
+    // Lo que el usuario aún debe pagar en el grupo (en US$) hacia el
+    // pagador de cada gasto.
+    public function totalPendienteDe($usuarioId, $grupoId) {
+        $sql = "SELECT COALESCE(SUM(
+                    CASE
+                        WHEN gp.monto_correspondiente_usd - gp.monto_pagado_usd < 0 THEN 0
+                        ELSE gp.monto_correspondiente_usd - gp.monto_pagado_usd
+                    END
+                ), 0) AS total
+                FROM gasto_participantes gp
+                JOIN gastos g ON g.id = gp.gasto_id
+                WHERE gp.usuario_id = :usuario_id
+                  AND g.grupo_id = :grupo_id
+                  AND g.estado = 'activo'
+                  AND g.pagado_por <> :usuario_id2";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            ':usuario_id' => $usuarioId,
+            ':grupo_id' => $grupoId,
+            ':usuario_id2' => $usuarioId
+        ]);
+        return (float) $stmt->fetchColumn();
+    }
+
+    public function getTotalByGroup($grupoId) {
+        $sql = "SELECT SUM(g.monto * g.tasa_usd) as total_usd, COUNT(*) as cantidad
+                FROM gastos g WHERE g.grupo_id = :grupo_id AND g.estado = 'activo'";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':grupo_id' => $grupoId]);
+        return $stmt->fetch();
+    }
+
+--------------------------------------------------------------------
+2.7) index.php  (modificado: nuevo case get_tasa_pago + register_payment)
+--------------------------------------------------------------------
+    /* ---------- Tasa online para pagar en cualquier moneda (JSON) ---------- */
+    case 'get_tasa_pago':
+        header('Content-Type: application/json; charset=utf-8');
+        $monedaTasa = strtoupper(trim((string) ($_GET['moneda'] ?? '')));
+        if (!in_array($monedaTasa, array_keys(MONEDAS_PAGO), true)) {
+            echo json_encode(['ok' => false, 'error' => 'Moneda no soportada.']);
+            exit;
+        }
+        $exchangeModel = new ExchangeRate(Database::getInstance());
+        $tasaOnline = $exchangeModel->obtenerTasaOnline($monedaTasa);
+        if ($tasaOnline !== null && $tasaOnline > 0) {
+            $exchangeModel->guardarTasaUsd($monedaTasa, $tasaOnline);
+            echo json_encode(['ok' => true, 'moneda' => $monedaTasa, 'tasa_usd' => round($tasaOnline, 6), 'origen' => 'online']);
+            exit;
+        }
+        $tasaGuardada = $exchangeModel->obtenerTasaUsdGuardada($monedaTasa);
+        if ($tasaGuardada !== null && $tasaGuardada > 0) {
+            echo json_encode(['ok' => true, 'moneda' => $monedaTasa, 'tasa_usd' => round($tasaGuardada, 6), 'origen' => 'guardada']);
+            exit;
+        }
+        $tasaGlobal = $exchangeModel->tasaUsdDe($monedaTasa);
+        if ($tasaGlobal > 0) {
+            echo json_encode(['ok' => true, 'moneda' => $monedaTasa, 'tasa_usd' => round($tasaGlobal, 6), 'origen' => 'global']);
+            exit;
+        }
+        echo json_encode(['ok' => false, 'error' => 'No se pudo obtener la tasa para ' . $monedaTasa . '. Introdúcela manualmente.']);
+        exit;
+        break;
+
+    /* ---------- Registrar pago ---------- */
+    case 'register_payment':
+        $grupoId = 0;
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $id = (int) ($_POST['gasto_id'] ?? 0);
+            $deUsuario = (int) ($_POST['usuario_id'] ?? 0);
+            $monto = (float) ($_POST['monto'] ?? 0);
+            $moneda = $_POST['moneda'] ?? MONEDA_BS;
+            $tasaUsd = (float) ($_POST['tasa_usd'] ?? 0);
+            $informacion = $_POST['informacion'] ?? '';
+
+            // Si el frontend no pudo aportar la tasa, se intenta derivar
+            // (online -> guardada -> global) antes de registrar.
+            if ($tasaUsd <= 0) {
+                $tasaUsd = (new ExchangeRate(Database::getInstance()))->derivarTasaPago($moneda, $tasaUsd);
+            }
+
+            $paymentModel = new Payment(Database::getInstance());
+            $resultado = $paymentModel->registrar($id, $deUsuario, $monto, $moneda, $tasaUsd, $informacion);
+            $grupoId = $resultado['ok'] ? $resultado['grupo_id'] : 0;
+            $flashMessages[] = $resultado['ok']
+                ? 'Pago registrado correctamente.'
+                : $resultado['error'];
+        }
+        if (!empty($flashMessages)) {
+            $_SESSION['flash'] = $flashMessages;
+        }
+        $destino = $grupoId > 0 ? '?action=group_detail&id=' . $grupoId : '?';
+        header('Location: ' . $destino);
+        exit;
+        break;
+
+--------------------------------------------------------------------
+2.8) templates/partials/modales_grupo.php  (modificado: modal de pago
+     + JS de conversión) — solo las partes nuevas/cambiadas
+--------------------------------------------------------------------
+<!-- Modal: Registrar pago (cualquier moneda) -->
+<div class="modal-overlay" id="modalRegistrarPago">
+    <div class="modal">
+        <div class="modal-cabecera">
+            <h2>Registrar pago</h2>
+            <button type="button" class="cerrar-modal" onclick="cerrarModal('modalRegistrarPago')"> &times; </button>
+        </div>
+        <div class="error" id="errorRegistrarPago" style="display:none;"></div>
+        <form method="POST" action="?action=register_payment">
+            <input type="hidden" name="gasto_id" id="registrarGastoId">
+            <input type="hidden" name="usuario_id" id="registrarUsuarioId">
+            <input type="hidden" name="tasa_usd" id="registrarTasa" value="">
+            <label> Tipo de moneda </label>
+            <select name="moneda" id="registrarMoneda" required></select>
+            <label> Monto a pagar (<span id="registrarEtiquetaMonto">—</span>) </label>
+            <input type="number" step="0.01" min="0.01" id="registrarMonto" name="monto" required>
+            <p id="previewRegistrarPago" style="font-size:13px; color:#666; margin:6px 0 0;"></p>
+            <label> Información adicional (opcional) </label>
+            <input type="text" id="registrarInformacion" name="informacion" placeholder="Ej: pagado con pago móvil">
+            <p id="ayudaRegistrarPago" style="color:#666; font-size:13px;"></p>
+            <div class="modal-acciones">
+                <button type="button" class="btn-cancelar" onclick="cerrarModal('modalRegistrarPago')"> Cancelar </button>
+                <button type="submit" class="btn-guardar" id="btnRegistrarPago"> Registrar pago </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+    /* ---------- Registrar pago (cualquier moneda) ---------- */
+    let pagoContexto = null;
+    let pagoMontoManual = false;
+    let pagoMonedaActual = null;
+
+    (function () {
+        const sel = document.getElementById('registrarMoneda');
+        Object.keys(MONEDAS_PAGO).forEach(function (cod) {
+            const op = document.createElement('option');
+            op.value = cod;
+            op.textContent = (MONEDAS_PAGO_LABEL[cod] || cod) + ' - ' + MONEDAS_PAGO[cod];
+            sel.appendChild(op);
+        });
+        sel.addEventListener('change', cargarTasaRegistro);
+        document.getElementById('registrarTasa').addEventListener('input', actualizarRegistro);
+        document.getElementById('registrarMonto').addEventListener('input', function () {
+            pagoMontoManual = true;
+            actualizarRegistro();
+        });
+    })();
+
+    function abrirRegistrarPago(gastoId, usuarioId, nombre, pendiente, pendienteUsd, tasaGasto, monedaGasto) {
+        document.getElementById('errorRegistrarPago').style.display = 'none';
+        document.getElementById('registrarGastoId').value = gastoId;
+        document.getElementById('registrarUsuarioId').value = usuarioId;
+        document.getElementById('registrarInformacion').value = '';
+        document.getElementById('registrarMonto').value = '';
+        document.getElementById('registrarTasa').value = '';
+        document.getElementById('btnRegistrarPago').disabled = true;
+        pagoContexto = {
+            gastoId: gastoId,
+            usuarioId: usuarioId,
+            nombre: nombre,
+            pendiente: Number(pendiente) || 0,
+            pendienteUsd: Number(pendienteUsd) || 0,
+            tasaGasto: Number(tasaGasto) || 0,
+            monedaGasto: monedaGasto || 'BS'
+        };
+        pagoMontoManual = false;
+        pagoMonedaActual = null;
+        const sel = document.getElementById('registrarMoneda');
+        sel.value = MONEDAS_PAGO[pagoContexto.monedaGasto] ? pagoContexto.monedaGasto : 'USD';
+        cargarTasaRegistro();
+        abrirModal('modalRegistrarPago');
+    }
+
+    function cargarTasaRegistro() {
+        if (!pagoContexto) return;
+        const sel = document.getElementById('registrarMoneda');
+        const moneda = sel.value;
+        if (pagoMonedaActual !== moneda) {
+            pagoMontoManual = false;
+            pagoMonedaActual = moneda;
+        }
+        document.getElementById('registrarTasa').value = '';
+        document.getElementById('btnRegistrarPago').disabled = true;
+        const ayuda = document.getElementById('ayudaRegistrarPago');
+        ayuda.textContent = 'Calculando pendiente en ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) + '...';
+        fetch('?action=get_tasa_pago&moneda=' + encodeURIComponent(moneda)).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.ok) {
+                document.getElementById('registrarTasa').value = Number(data.tasa_usd).toFixed(6);
+                document.getElementById('btnRegistrarPago').disabled = false;
+                if (!pagoMontoManual) {
+                    const tasa = Number(data.tasa_usd);
+                    const pendienteMoneda = tasa > 0 ? pagoContexto.pendienteUsd / tasa : 0;
+                    document.getElementById('registrarMonto').value = pendienteMoneda > 0 ? pendienteMoneda.toFixed(2) : '';
+                }
+            } else {
+                ayuda.textContent = data.error || 'No se pudo obtener la tasa para ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) + '.';
+            }
+            actualizarRegistro();
+        }).catch(function () {
+            ayuda.textContent = 'Sin conexión para la tasa de ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) + '. Intenta de nuevo.';
+            actualizarRegistro();
+        });
+    }
+
+    function actualizarRegistro() {
+        if (!pagoContexto) return;
+        const sel = document.getElementById('registrarMoneda');
+        const moneda = sel.value;
+        const tasa = parseFloat(document.getElementById('registrarTasa').value) || 0;
+        document.getElementById('registrarEtiquetaMonto').textContent = MONEDAS_PAGO_LABEL[moneda] || moneda;
+
+        const pendienteUsd = pagoContexto.pendienteUsd;
+        const ayuda = document.getElementById('ayudaRegistrarPago');
+        let texto = 'Debes ';
+        if (tasa > 0) {
+            texto += MONEDA_FORMAT.format(pendienteUsd / tasa) + ' ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) +
+                     ' (US$ ' + MONEDA_FORMAT.format(pendienteUsd) + ')';
+        } else {
+            texto += 'US$ ' + MONEDA_FORMAT.format(pendienteUsd);
+        }
+        ayuda.textContent = texto;
+
+        const monto = parseFloat(document.getElementById('registrarMonto').value) || 0;
+        const preview = document.getElementById('previewRegistrarPago');
+        preview.textContent = (monto > 0 && tasa > 0)
+            ? 'Al registrar se descontarán US$ ' + MONEDA_FORMAT.format(monto * tasa) + ' de tu deuda.'
+            : '';
+    }
+
+--------------------------------------------------------------------
+2.9) templates/groups/detail.php  (modificado: tabla de deudores en US$)
+--------------------------------------------------------------------
+    <!-- Deudores: el "Total deuda" ahora se muestra en US$ (fmtUsd) y
+         cada deuda lleva su pendiente en US$ + equivalente en la moneda
+         del gasto + botón "Pagar deuda" que abre el modal multi-moneda. -->
+    <?php foreach ($deudores as $deudor): ?>
+        <tr class="deudor-fila" onclick="alternarDeudas(<?= (int) $deudor['usuario_id'] ?>)">
+            <td><strong><?= htmlspecialchars($deudor['nombre']) ?></strong></td>
+            <td><strong class="deuda-total-deudor"><?= fmtUsd($deudor['total_usd']) ?></strong></td>
+            <td><span class="accion"> Ver detalle ▾ </span></td>
+        </tr>
+        <tr class="deudor-detalle" id="deudor-detalle-<?= (int) $deudor['usuario_id'] ?>" style="display:none;">
+            <td colspan="3">
+                <table class="tabla-interna">
+                    <thead><tr><th>Título</th><th>Deuda</th><th>Pagar deuda</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($deudor['deudas'] as $deuda): ?>
+                        <tr>
+                            <td><strong><?= htmlspecialchars($deuda['concepto']) ?></strong></td>
+                            <td><?= fmtUsd((float) $deuda['monto_usd']) ?><br>
+                                <small style="color:#666;"><?= fmtMoneda((float) $deuda['monto'], $deuda['moneda']) ?></small></td>
+                            <td>
+                                <button type="button" class="accion boton-accion"
+                                    onclick="pagarDeuda(<?= (int) $deuda['gasto_id'] ?>, <?= (int) $deudor['usuario_id'] ?>, '<?= e($deudor['nombre']) ?>', <?= number_format((float) $deuda['monto'], 2, '.', '') ?>, <?= number_format((float) $deuda['monto_usd'], 2, '.', '') ?>, <?= number_format((float) $deuda['tasa_usd'], 6, '.', '') ?>, '<?= e($deuda['moneda']) ?>')">
+                                    Pagar deuda
+                                </button>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+
+--------------------------------------------------------------------
+2.10) templates/expenses/list.php  (modificado: banner pendiente en US$)
+--------------------------------------------------------------------
+<div class="seccion" style="background:#eaf3fb; box-shadow:none; text-align:center;">
+    <strong>Tienes pendiente de pagar:</strong>
+    <span style="font-size:1.4rem; font-weight:bold; color:#0066cc;"> <?= fmtUsd($totalPendienteUsuario) ?> </span>
+</div>
+
+--------------------------------------------------------------------
+2.11) templates/helpers.php  (modificado: helper fmtUsd)
+--------------------------------------------------------------------
+// Formatea un monto en US$ (base de conciliación).
+function fmtUsd($monto) {
+    return 'US$ ' . number_format((float) $monto, 2);
+}
+
+--------------------------------------------------------------------
+3) LO QUE SE HIZO (explicación del comportamiento)
+--------------------------------------------------------------------
+
+BD (migración sql/pago_multi_moneda.sql, aplicada con php sql/ejecutar.php):
+- pagos.moneda (VARCHAR) -> moneda en la que se pagó.
+- pagos.tasa_usd (NUMERIC) -> cuántos US$ vale 1 unidad pagada.
+- pagos.monto_usd (NUMERIC) -> equivalente en US$ del pago.
+- Backfill: los pagos antiguos se marcan con la moneda y tasa del gasto.
+
+Servidor (index.php):
+- NUEVO endpoint GET ?action=get_tasa_pago&moneda=XXX que devuelve JSON
+  {'ok', 'tasa_usd', 'origen'}. Origen: 'online' (open.er-api.com o
+  CoinGecko, y se guarda en configuracion como tasa_usd_XXX), luego
+  'guardada' (última tasa almacenada) y por último 'global' (tasaUsdDe).
+- register_payment ahora acepta 'moneda' y 'tasa_usd' (ocultos). Si la
+  tasa llega en 0, el servidor la deriva (online -> guardada -> global)
+  y la usa igualmente. Delega en Payment::registrar().
+
+Modelo Payment::registrar(gastoId, deUsuario, monto, moneda, tasaUsd, info):
+- Valida que la moneda esté en MONEDAS_PAGO.
+- Calcula el pendiente REAL en US$: monto_correspondiente_usd -
+  monto_pagado_usd.
+- monto_usd = monto x tasa_usd; rechaza si excede el pendiente.
+- En una transacción: INSERT en pagos (con moneda, tasa_usd, monto_usd)
+  y UPDATE de gasto_participantes creciendo monto_pagado_usd y
+  monto_pagado (en la moneda del gasto = nuevoPagadoUsd / tasaUsdGasto),
+  cambiando estado_pago a 'parcial'/'pagado'.
+
+Modelo ExchangeRate:
+- obtenerTasaOnline: Fiat -> 1 / rates[ISO] de open.er-api.com
+  (Bs se consulta como VES); USDT -> precio de Tether vía CoinGecko.
+- guardarTasaUsd / obtenerTasaUsdGuardada: cache en configuracion
+  (clave tasa_usd_<CODIGO>).
+- derivarTasaPago: tasa recibida > online (y guarda) > guardada > global.
+
+Modelo Expense:
+- getById/getParticipantes ya exponen monto_correspondiente_usd y
+  monto_pagado_usd (el modal "Ver gasto" usa USD para pendientes).
+- getDeudores: agrupa por usuario el pendiente en US$ + desglose por
+  gasto (con moneda, tasa y monto en US$).
+- totalPendienteDe / getTotalByGroup: totales en US$.
+
+Frontend (modal "Registrar pago"):
+- Selector "Tipo de moneda" alimentado con MONEDAS_PAGO.
+- La "Tasa USD" es un input hidden que se rellena solo vía
+  get_tasa_pago (el usuario no la ve ni la edita).
+- Pre-llenado: al abrir el modal (o cambiar de moneda) se calcula
+  pendienteUsd / tasa y se coloca automáticamente en "Monto a pagar".
+- Debe X [moneda] (US$ Y): texto informativo con el pendiente
+  convertido.
+- Preview dinámico: "Al registrar se descontarán US$ Z de tu deuda."
+- Si el usuario teclea el monto, se respeta (pagoMontoManual) hasta que
+  cambie de moneda.
+- El botón "Registrar pago" queda deshabilitado mientras no haya tasa.
+
+Extras:
+- La tabla de deudores del grupo y el banner de la lista de gastos
+  muestran los montos en US$ (presentación; la conciliación ya era US$).
+- El "Ver gasto" muestra en cada fila el pendiente en US$ y abre el
+  mismo modal con "Registrar pago".
+====================================================================
+FIN
+====================================================================

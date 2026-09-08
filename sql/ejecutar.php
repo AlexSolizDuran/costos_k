@@ -7,7 +7,7 @@
 
 require __DIR__ . '/../src/models/Database.php';
 
-$archivos = ['migracion.sql', 'multi_moneda.sql'];
+$archivos = ['migracion.sql', 'multi_moneda.sql', 'pago_multi_moneda.sql'];
 
 // Separa un archivo SQL en sentencias individuales por ";" al final de línea.
 function dividirSql($sql) {

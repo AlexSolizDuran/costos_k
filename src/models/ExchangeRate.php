@@ -92,6 +92,7 @@ class ExchangeRate {
     //   USD  -> 1
     //   BS   -> 1 / bs_por_usd
     //   USDT -> bs_por_usdt / bs_por_usd
+    //   Otras -> tasa guardada por la API online (tasa_usd_<CODIGO>)
     public function tasaUsdDe($moneda) {
         $moneda = strtoupper((string) $moneda);
         if ($moneda === MONEDA_USD) {
@@ -105,7 +106,96 @@ class ExchangeRate {
         if ($moneda === MONEDA_USDT) {
             return ($rUsd > 0) ? ($tasas['bs_por_usdt'] / $rUsd) : 0.0;
         }
-        return 0.0;
+        $guardada = $this->obtenerTasaUsdGuardada($moneda);
+        return $guardada !== null ? $guardada : 0.0;
+    }
+
+    // Tasa USD (US$ por 1 unidad) de una moneda consultada ONLINE.
+    // Fiat: open.er-api.com (base USD). USDT: CoinGecko.
+    // Devuelve float o null si no se pudo obtener.
+    public function obtenerTasaOnline($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        if ($moneda === MONEDA_USD) {
+            return 1.0;
+        }
+        if ($moneda === MONEDA_USDT) {
+            return $this->tasaUsdtOnline();
+        }
+        $iso = $moneda === MONEDA_BS ? 'VES' : $moneda;
+        $json = $this->httpGet('https://open.er-api.com/v6/latest/USD');
+        if ($json === null) {
+            return null;
+        }
+        $data = json_decode($json, true);
+        if (!isset($data['rates'][$iso])) {
+            return null;
+        }
+        $porUsd = (float) $data['rates'][$iso];
+        return $porUsd > 0 ? 1.0 / $porUsd : 0.0;
+    }
+
+    // ¿Cuántos US$ vale 1 USDT hoy (precio de Tether en USD)?
+    private function tasaUsdtOnline() {
+        $json = $this->httpGet('https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=usd');
+        if ($json === null) {
+            return null;
+        }
+        $data = json_decode($json, true);
+        $v = $data['tether']['usd'] ?? null;
+        return $v !== null ? (float) $v : null;
+    }
+
+    private function httpGet($url) {
+        $ctx = stream_context_create(['http' => ['timeout' => 12, 'ignore_errors' => true, 'user_agent' => 'costos-k/1.0']]);
+        $resultado = @file_get_contents($url, false, $ctx);
+        return $resultado === false ? null : $resultado;
+    }
+
+    // Guarda la tasa USD (US$ por 1 unidad) de una moneda en configuracion.
+    public function guardarTasaUsd($moneda, $tasa) {
+        $moneda = strtoupper((string) $moneda);
+        $tasa = round((float) $tasa, 6);
+        if ($tasa <= 0) {
+            return false;
+        }
+        $sql = "INSERT INTO configuracion (clave, valor, actualizado)
+                VALUES (:clave, :valor, NOW())
+                ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado = NOW()";
+        $stmt = $this->db->prepare($sql);
+        try {
+            return $stmt->execute([':clave' => 'tasa_usd_' . $moneda, ':valor' => $tasa]);
+        } catch (Exception $e) {
+            return false;
+        }
+    }
+
+    // Tasa USD guardada (por la API online) de una moneda, o null si no existe.
+    public function obtenerTasaUsdGuardada($moneda) {
+        $moneda = strtoupper((string) $moneda);
+        $sql = "SELECT valor FROM configuracion WHERE clave = :clave";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([':clave' => 'tasa_usd_' . $moneda]);
+        $valor = $stmt->fetchColumn();
+        return ($valor === null || $valor === false) ? null : (float) $valor;
+    }
+
+    // Mejor tasa USD disponible para un pago: la recibida, o se deriva de
+    // online -> guardada -> global. Devuelve 0 si ninguna es utilizable.
+    public function derivarTasaPago($moneda, $tasaActual = 0.0) {
+        $moneda = strtoupper((string) $moneda);
+        if ((float) $tasaActual > 0) {
+            return round((float) $tasaActual, 6);
+        }
+        $online = $this->obtenerTasaOnline($moneda);
+        if ($online !== null && $online > 0) {
+            $this->guardarTasaUsd($moneda, $online);
+            return round($online, 6);
+        }
+        $guardada = $this->obtenerTasaUsdGuardada($moneda);
+        if ($guardada !== null && $guardada > 0) {
+            return round($guardada, 6);
+        }
+        return round($this->tasaUsdDe($moneda), 6);
     }
 
     // Convierte un monto de una moneda a otra (USD, BS, USDT) con las tasas vigentes.

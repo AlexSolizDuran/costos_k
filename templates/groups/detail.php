@@ -134,7 +134,7 @@ ob_start();
                 <?php foreach ($deudores as $deudor): ?>
                     <tr class="deudor-fila" onclick="alternarDeudas(<?= (int) $deudor['usuario_id'] ?>)">
                         <td><strong><?= htmlspecialchars($deudor['nombre']) ?></strong></td>
-                        <td><strong class="deuda-total-deudor"><?= bs($deudor['total']) ?></strong></td>
+                        <td><strong class="deuda-total-deudor"><?= fmtUsd($deudor['total_usd']) ?></strong></td>
                         <td>
                             <span class="accion"> Ver detalle ▾ </span>
                         </td>
@@ -152,15 +152,21 @@ ob_start();
                                 <tbody>
                                 <?php foreach ($deudor['deudas'] as $deuda): ?>
                                     <?php $pendiente = (float) $deuda['monto']; ?>
+                                    <?php $pendienteUsd = (float) $deuda['monto_usd']; ?>
+                                    <?php $tasaGasto = (float) $deuda['tasa_usd']; ?>
+                                    <?php $monedaGasto = $deuda['moneda']; ?>
                                     <tr>
                                         <td>
                                             <strong><?= htmlspecialchars($deuda['concepto']) ?></strong>
                                             <br><span style="color:#888; font-size:12px;"><?= fmtFechaCorta($deuda['fecha']) ?></span>
                                         </td>
-                                        <td><?= bs($pendiente) ?></td>
+                                        <td>
+                                            <?= fmtUsd($pendienteUsd) ?>
+                                            <br><small style="color:#666;"><?= fmtMoneda($pendiente, $monedaGasto) ?></small>
+                                        </td>
                                         <td>
                                             <button type="button" class="accion boton-accion"
-                                                onclick="pagarDeuda(<?= (int) $deuda['gasto_id'] ?>, <?= (int) $deudor['usuario_id'] ?>, '<?= e($deudor['nombre']) ?>', <?= number_format($pendiente, 2, '.', '') ?>)">
+                                                onclick="pagarDeuda(<?= (int) $deuda['gasto_id'] ?>, <?= (int) $deudor['usuario_id'] ?>, '<?= e($deudor['nombre']) ?>', <?= number_format($pendiente, 2, '.', '') ?>, <?= number_format($pendienteUsd, 2, '.', '') ?>, <?= number_format($tasaGasto, 6, '.', '') ?>, '<?= e($monedaGasto) ?>')">
                                                 Pagar deuda
                                             </button>
                                         </td>

@@ -21,6 +21,11 @@ function bs($monto) {
     return fmtMoneda($monto, MONEDA_BS);
 }
 
+// Formatea un monto en US$ (base de conciliación).
+function fmtUsd($monto) {
+    return 'US$ ' . number_format((float) $monto, 2);
+}
+
 // Formatea una fecha legible
 function fmtFecha($fecha) {
     if (empty($fecha)) {

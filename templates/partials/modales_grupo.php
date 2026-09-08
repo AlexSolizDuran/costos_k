@@ -128,14 +128,18 @@ $esAdminGrupo = ($rolActual === 'admin');
         <form method="POST" action="?action=register_payment">
             <input type="hidden" name="gasto_id" id="registrarGastoId">
             <input type="hidden" name="usuario_id" id="registrarUsuarioId">
-            <label> Monto a pagar (Bs) </label>
+            <input type="hidden" name="tasa_usd" id="registrarTasa" value="">
+            <label> Tipo de moneda </label>
+            <select name="moneda" id="registrarMoneda" required></select>
+            <label> Monto a pagar (<span id="registrarEtiquetaMonto">—</span>) </label>
             <input type="number" step="0.01" min="0.01" id="registrarMonto" name="monto" required>
+            <p id="previewRegistrarPago" style="font-size:13px; color:#666; margin:6px 0 0;"></p>
             <label> Información adicional (opcional) </label>
             <input type="text" id="registrarInformacion" name="informacion" placeholder="Ej: pagado con pago móvil">
             <p id="ayudaRegistrarPago" style="color:#666; font-size:13px;"></p>
             <div class="modal-acciones">
                 <button type="button" class="btn-cancelar" onclick="cerrarModal('modalRegistrarPago')"> Cancelar </button>
-                <button type="submit" class="btn-guardar"> Registrar pago </button>
+                <button type="submit" class="btn-guardar" id="btnRegistrarPago"> Registrar pago </button>
             </div>
         </form>
     </div>
@@ -193,6 +197,8 @@ $esAdminGrupo = ($rolActual === 'admin');
 <script>
     const MONEDA_FORMAT = new Intl.NumberFormat('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const MONEDA_LABELS = <?= json_encode(MONEDAS_LABEL, JSON_UNESCAPED_UNICODE) ?>;
+    const MONEDAS_PAGO = <?= json_encode(MONEDAS_PAGO, JSON_UNESCAPED_UNICODE) ?>;
+    const MONEDAS_PAGO_LABEL = <?= json_encode(MONEDAS_PAGO_LABEL, JSON_UNESCAPED_UNICODE) ?>;
     function montoFmt(n, moneda) { return (MONEDA_LABELS[moneda] || moneda) + ' ' + MONEDA_FORMAT.format(n); }
     function montoConUsdFmt(n, moneda, tasa, usd) {
         const equivalente = typeof usd === 'number' && !Number.isNaN(usd) ? usd : n * tasa;
@@ -342,7 +348,7 @@ $esAdminGrupo = ($rolActual === 'admin');
                     const pendienteUsd = Math.max(0, (Number(p.monto_correspondiente_usd) - Number(p.monto_pagado_usd)));
                 const puedePagar = (idP !== pagador) && (Number(p.monto_correspondiente) - Number(p.monto_pagado) > 0.001) && g.estado === 'activo';
                 const accion = puedePagar
-                    ? '<button type="button" class="accion" onclick="abrirRegistrarPago(' + g.id + ', ' + idP + ', \'' + p.nombre.replace(/'/g, "\\'") + '\', ' + pendiente.toFixed(2) + ')"> Registrar pago </button>'
+                    ? '<button type="button" class="accion" onclick="abrirRegistrarPago(' + g.id + ', ' + idP + ', \'' + p.nombre.replace(/'/g, "\\'") + '\', ' + pendiente.toFixed(2) + ', ' + pendienteUsd.toFixed(2) + ', ' + Number(g.tasa_usd).toFixed(6) + ', \'' + g.moneda + '\')"> Registrar pago </button>'
                     : '';
                 filas += '<tr>' +
                     '<td>' + (idP === pagador ? '<strong>' + p.nombre + ' (pagó)</strong>' : p.nombre) + '</td>' +
@@ -367,16 +373,117 @@ $esAdminGrupo = ($rolActual === 'admin');
         }).catch(function () { cont.innerHTML = '<p>Error de conexión.</p>'; });
     }
 
-    /* ---------- Registrar pago ---------- */
-    function abrirRegistrarPago(gastoId, usuarioId, nombre, pendiente) {
+    /* ---------- Registrar pago (cualquier moneda) ---------- */
+    let pagoContexto = null;
+    let pagoMontoManual = false;
+    let pagoMonedaActual = null;
+
+    (function () {
+        const sel = document.getElementById('registrarMoneda');
+        Object.keys(MONEDAS_PAGO).forEach(function (cod) {
+            const op = document.createElement('option');
+            op.value = cod;
+            op.textContent = (MONEDAS_PAGO_LABEL[cod] || cod) + ' - ' + MONEDAS_PAGO[cod];
+            sel.appendChild(op);
+        });
+        sel.addEventListener('change', cargarTasaRegistro);
+        document.getElementById('registrarTasa').addEventListener('input', actualizarRegistro);
+        document.getElementById('registrarMonto').addEventListener('input', function () {
+            pagoMontoManual = true;
+            actualizarRegistro();
+        });
+    })();
+
+    function abrirRegistrarPago(gastoId, usuarioId, nombre, pendiente, pendienteUsd, tasaGasto, monedaGasto) {
         document.getElementById('errorRegistrarPago').style.display = 'none';
         document.getElementById('registrarGastoId').value = gastoId;
         document.getElementById('registrarUsuarioId').value = usuarioId;
-        document.getElementById('registrarMonto').value = pendiente.toFixed(2);
         document.getElementById('registrarInformacion').value = '';
-        document.getElementById('registrarMonto').max = pendiente.toFixed(2);
-        document.getElementById('ayudaRegistrarPago').textContent = 'Pendiente de ' + nombre + ': ' + montoFmt(pendiente, window.monedaGastoActual || 'BS');
+        document.getElementById('registrarMonto').value = '';
+        document.getElementById('registrarTasa').value = '';
+        document.getElementById('btnRegistrarPago').disabled = true;
+        pagoContexto = {
+            gastoId: gastoId,
+            usuarioId: usuarioId,
+            nombre: nombre,
+            pendiente: Number(pendiente) || 0,
+            pendienteUsd: Number(pendienteUsd) || 0,
+            tasaGasto: Number(tasaGasto) || 0,
+            monedaGasto: monedaGasto || 'BS'
+        };
+        pagoMontoManual = false;
+        pagoMonedaActual = null;
+        const sel = document.getElementById('registrarMoneda');
+        sel.value = MONEDAS_PAGO[pagoContexto.monedaGasto] ? pagoContexto.monedaGasto : 'USD';
+        cargarTasaRegistro();
         abrirModal('modalRegistrarPago');
+    }
+
+    function cargarTasaRegistro() {
+        if (!pagoContexto) return;
+        const sel = document.getElementById('registrarMoneda');
+        const moneda = sel.value;
+        if (pagoMonedaActual !== moneda) {
+            pagoMontoManual = false;
+            pagoMonedaActual = moneda;
+        }
+        document.getElementById('registrarTasa').value = '';
+        document.getElementById('btnRegistrarPago').disabled = true;
+        const ayuda = document.getElementById('ayudaRegistrarPago');
+        ayuda.textContent = 'Calculando pendiente en ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) + '...';
+        fetch('?action=get_tasa_pago&moneda=' + encodeURIComponent(moneda)).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.ok) {
+                document.getElementById('registrarTasa').value = Number(data.tasa_usd).toFixed(6);
+                document.getElementById('btnRegistrarPago').disabled = false;
+                if (!pagoMontoManual) {
+                    const tasa = Number(data.tasa_usd);
+                    const pendienteMoneda = tasa > 0 ? pagoContexto.pendienteUsd / tasa : 0;
+                    document.getElementById('registrarMonto').value = pendienteMoneda > 0 ? pendienteMoneda.toFixed(2) : '';
+                }
+            } else {
+                ayuda.textContent = data.error || 'No se pudo obtener la tasa para ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) + '.';
+            }
+            actualizarRegistro();
+        }).catch(function () {
+            ayuda.textContent = 'Sin conexión para la tasa de ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) + '. Intenta de nuevo.';
+            actualizarRegistro();
+        });
+    }
+
+    function actualizarRegistro() {
+        if (!pagoContexto) return;
+        const sel = document.getElementById('registrarMoneda');
+        const moneda = sel.value;
+        const tasa = parseFloat(document.getElementById('registrarTasa').value) || 0;
+        document.getElementById('registrarEtiquetaMonto').textContent = MONEDAS_PAGO_LABEL[moneda] || moneda;
+
+        const pendienteUsd = pagoContexto.pendienteUsd;
+        const ayuda = document.getElementById('ayudaRegistrarPago');
+        let texto = 'Debes ';
+        if (tasa > 0) {
+            texto += MONEDA_FORMAT.format(pendienteUsd / tasa) + ' ' + (MONEDAS_PAGO_LABEL[moneda] || moneda) +
+                     ' (US$ ' + MONEDA_FORMAT.format(pendienteUsd) + ')';
+        } else {
+            texto += 'US$ ' + MONEDA_FORMAT.format(pendienteUsd);
+        }
+        ayuda.textContent = texto;
+
+        const monto = parseFloat(document.getElementById('registrarMonto').value) || 0;
+        const preview = document.getElementById('previewRegistrarPago');
+        preview.textContent = (monto > 0 && tasa > 0)
+            ? 'Al registrar se descontarán US$ ' + MONEDA_FORMAT.format(monto * tasa) + ' de tu deuda.'
+            : '';
+    }
+
+    /* ---------- Deudores: expandir detalle ---------- */
+    function alternarDeudas(usuarioId) {
+        const fila = document.getElementById('deudor-detalle-' + usuarioId);
+        if (fila) fila.style.display = fila.style.display === 'none' ? '' : 'none';
+    }
+
+    /* ---------- Deudores: abrir ventana flotante de registrar pago ---------- */
+    function pagarDeuda(gastoId, usuarioId, nombre, pendiente, pendienteUsd, tasaGasto, monedaGasto) {
+        abrirRegistrarPago(gastoId, usuarioId, nombre, pendiente, pendienteUsd, tasaGasto, monedaGasto);
     }
 
     /* ---------- Modificar gasto ---------- */
@@ -497,10 +604,5 @@ $esAdminGrupo = ($rolActual === 'admin');
     function alternarDeudas(usuarioId) {
         const fila = document.getElementById('deudor-detalle-' + usuarioId);
         if (fila) fila.style.display = fila.style.display === 'none' ? '' : 'none';
-    }
-
-    /* ---------- Deudores: abrir ventana flotante de registrar pago ---------- */
-    function pagarDeuda(gastoId, usuarioId, nombre, pendiente) {
-        abrirRegistrarPago(gastoId, usuarioId, nombre, pendiente);
     }
 </script>
